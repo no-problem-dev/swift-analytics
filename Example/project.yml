@@ -1,0 +1,61 @@
+# 計測の「繋ぎ」を実際に動かして確かめるための最小アプリ。
+#
+# ユニットテストは「信号が来たときどう数えるか」しか固定できない。
+# **SwiftUI が本当にその信号を送るか**は、動かさないと分からない（Example/HAZARDS.md）。
+#
+#   cd Example && xcodegen generate
+#   ../Scripts/example.sh test
+name: AnalyticsProbe
+options:
+  bundleIdPrefix: dev.no-problem.analytics
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+packages:
+  swift-analytics:
+    path: ..
+
+targets:
+  AnalyticsProbe:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    info:
+      path: Sources/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: Probe
+    dependencies:
+      - package: swift-analytics
+        product: AnalyticsCore
+      - package: swift-analytics
+        product: AnalyticsSwiftUI
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        # 明示しないと iPad だけの target とみなされ、iPhone のシミュレータが
+        # destination に出てこない（XCUITest が回せない）
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+  AnalyticsProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: AnalyticsProbe
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        # テストバンドルの Info.plist は自動生成でよい（アプリ側だけ手で持つ）
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  AnalyticsProbe:
+    build:
+      targets:
+        AnalyticsProbe: all
+        AnalyticsProbeUITests: [test]
+    test:
+      targets: [AnalyticsProbeUITests]

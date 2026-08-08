@@ -1,0 +1,67 @@
+# 計測カタログの例。仕様は SCHEMA.md。
+#
+# **このファイルが仕様書を兼ねる。** description を日本語で書いておけば、
+# エンジニア以外もここを読んで計測の話に参加できる。
+
+version: 1
+dialect: ga4
+
+swift:
+  event_type: ExampleEvent
+  property_type: ExampleUserProperty
+  module: Example
+  swiftui: true
+
+events:
+  - name: tutorial_begin
+    kind: screen
+    dedup: episode
+    description: 初回体験の 1 枚目に着いた
+    trigger: OnboardingFlowView（同意画面からは撃たない）
+
+  - name: tutorial_complete
+    kind: outcome
+    dedup: always
+    description: 初回体験を終えてホームに着いた
+    parameters:
+      items:
+        type: count
+        description: 実際に作られた件数
+
+  - name: paywall_shown
+    kind: impression
+    dedup: episode
+    description: 課金の案内が実際に見えた
+    trigger: PaywallView が 50% 以上 1 秒
+    parameters:
+      source:
+        type: enum
+        values: [teaser, solo_card, gate_402]
+        description: どの露出点から開いたか
+
+  - name: stock_first_record
+    kind: outcome
+    dedup: install
+    description: その端末で最初の記録
+    parameters:
+      day:
+        type: count
+        description: 初回起動からの日数
+
+user_properties:
+  - name: plan
+    type: enum
+    values: [free, paid]
+    description: 課金の状態
+
+  - name: items_bucket
+    type: bucket
+    edges: [1, 6, 16]
+    description: 登録件数の帯（生の件数は個人を指しうるので帯にする）
+
+# サーバーの正典から数えるもの。**Swift は生成されない。**
+facts:
+  - name: notified_before_empty
+    description: 切れる前に通知が出た品目
+    source: d1
+    query: queries/notified_before_empty.sql
