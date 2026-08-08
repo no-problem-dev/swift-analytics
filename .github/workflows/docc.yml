@@ -34,10 +34,10 @@ jobs:
           swift package --allow-writing-to-directory ./docs \
             generate-documentation \
             --enable-experimental-combined-documentation \
-            --target StructuredDataCore --target JSONParsing --target YAMLParsing --target XMLCoding \
+            --target AnalyticsCore --target AnalyticsSwiftUI --target AnalyticsTesting \
             --disable-indexing \
             --transform-for-static-hosting \
-            --hosting-base-path swift-structured-data \
+            --hosting-base-path swift-analytics \
             --output-path ./docs
 
       - name: Inject package overview into combined root
