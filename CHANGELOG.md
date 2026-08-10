@@ -1,5 +1,8 @@
 # Changelog
 
+## [Unreleased]
+
+
 Keep a Changelog 形式。バージョンはタグと一致させる。
 
 ## [0.1.0] - 2026-08-09
