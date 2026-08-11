@@ -132,9 +132,9 @@ public struct AnalyticsLogViewer: View {
                 // Empty means "nothing has fired yet", not "this is broken". Say so, so the two
                 // are not mistaken for each other.
                 ContentUnavailableView(
-                    "まだ何も撃っていません",
+                    "No Events Yet",
                     systemImage: "waveform",
-                    description: Text("画面を操作すると、出た順にここへ並びます。")
+                    description: Text("Events appear here as they fire.")
                 )
             } else {
                 ForEach(visible) { entry in
@@ -142,13 +142,13 @@ public struct AnalyticsLogViewer: View {
                 }
             }
         }
-        .searchable(text: $query, prompt: "名前で絞る")
-        .navigationTitle("計測ログ")
+        .searchable(text: $query, prompt: "Filter by name")
+        .navigationTitle("Analytics Log")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Toggle("属性だけ", isOn: $showsPropertiesOnly)
-                    Button("消す", role: .destructive) { log.clear() }
+                    Toggle("Properties Only", isOn: $showsPropertiesOnly)
+                    Button("Clear", role: .destructive) { log.clear() }
                         .disabled(log.entries.isEmpty)
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -193,7 +193,7 @@ public struct AnalyticsLogViewer: View {
                 if let kind = entry.kind, let dedup = entry.dedup {
                     Text("\(kind.rawValue) / \(dedup.rawValue)")
                 } else {
-                    Text("属性")
+                    Text("Property")
                 }
             }
             .font(.caption2)

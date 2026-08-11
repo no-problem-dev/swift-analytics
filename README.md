@@ -2,7 +2,7 @@ English | [日本語](./README.ja.md)
 
 # swift-analytics
 
-Vocabulary for product analytics, and the tools to count it correctly in SwiftUI.
+Analytics events for Swift apps that declare how they should be counted, so the rule lives in the event's definition instead of in whoever remembers it at the call site.
 
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2017%20%7C%20macOS%2014%20%7C%20tvOS%2017%20%7C%20watchOS%2010%20%7C%20visionOS%201-blue.svg)

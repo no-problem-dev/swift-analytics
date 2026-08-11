@@ -2,7 +2,7 @@
 
 # swift-analytics
 
-プロダクト分析（人の行動の計測）のための語彙と、SwiftUI で正しく数えるための道具。
+「どう数えるか」をイベントの定義自身に持たせる。数え方の規則が、呼び出し側の記憶ではなく定義の側にある。
 
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2017%20%7C%20macOS%2014%20%7C%20tvOS%2017%20%7C%20watchOS%2010%20%7C%20visionOS%201-blue.svg)
