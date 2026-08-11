@@ -79,7 +79,7 @@ The catalog file format is specified, in Japanese, in [Schema/SCHEMA.md](./Schem
 ## Installation
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-analytics.git", from: "0.1.0")
+.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.1.0"))
 ```
 
 | Product | Contents | Depends on |
