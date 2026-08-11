@@ -3,26 +3,27 @@
 ## [Unreleased]
 
 
-Keep a Changelog 形式。バージョンはタグと一致させる。
+Keep a Changelog format. Versions match their tags.
 
 ## [0.1.0] - 2026-08-09
 
-最初の公開。
+First public release.
 
-### 入っているもの
+### What's included
 
-- `AnalyticsCore` — 語彙（`AnalyticsEvent` / `AnalyticsUserProperty` / `AnalyticsValue`）、
-  ポート（`AnalyticsClient`）、数え方（`EventKind` / `DedupScope` / `ImpressionTracker` /
-  `DedupingAnalytics`）。**外部依存ゼロ**
-- `AnalyticsSwiftUI` — `\.analytics` 環境値、`trackScreen` / `trackImpression`、
-  `ImpressionSession`、端末で読む `AnalyticsLogViewer`
-- `AnalyticsTesting` — `RecordingAnalytics`（回数まで数える）
-- `Scripts/analytics-gen.py` — YAML のカタログから Swift を生成し、方言と配線を検査する
-  （Python 標準ライブラリのみ）
-- `Example/` — 繋ぎを実際に動かして確かめるサンプルアプリと XCUITest（`Example/HAZARDS.md`）
+- `AnalyticsCore` — the vocabulary (`AnalyticsEvent` / `AnalyticsUserProperty` / `AnalyticsValue`),
+  the port (`AnalyticsClient`), and how things are counted (`EventKind` / `DedupScope` /
+  `ImpressionTracker` / `DedupingAnalytics`). **No external dependencies**
+- `AnalyticsSwiftUI` — the `\.analytics` environment value, `trackScreen` / `trackImpression`,
+  `ImpressionSession`, and `AnalyticsLogViewer` for reading logs on the device
+- `AnalyticsTesting` — `RecordingAnalytics` (counts occurrences)
+- `Scripts/analytics-gen.py` — generates Swift from the YAML catalog and checks the dialect
+  and the wiring (Python standard library only)
+- `Example/` — a sample app and XCUITest that run the wiring for real to check it (`Example/HAZARDS.md`)
 
-### 決めていること
+### Decisions
 
-- 「見えた」= 面積の 50% 以上が連続 1.0 秒以上（MRC のモバイルアプリ内表示基準）
-- ドメインの事実はクライアントから送らない。サーバーの正典から数える
-- 送信先のアダプタは同梱しない（SwiftPM の依存解決はパッケージ単位のため）
+- "Seen" = at least 50% of the area for at least 1.0 continuous second (the MRC in-app mobile
+  viewability standard)
+- Domain facts are not sent from the client. They are counted from the server's canonical record
+- Adapters for destinations are not bundled (SwiftPM resolves dependencies per package)
