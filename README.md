@@ -48,7 +48,7 @@ swift:
 events:
   - name: paywall_shown
     kind: impression        # screen | impression | interaction | outcome
-    dedup: episode          # episode | session | install | always
+    dedup: always           # session | install | always
     description: The paywall was actually seen
 ```
 

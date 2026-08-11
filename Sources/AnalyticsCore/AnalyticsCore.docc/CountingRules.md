@@ -61,14 +61,26 @@ past can all be pinned in a unit test with no real time passing.
 
 ## Deduplication scopes
 
-``DedupScope`` has four cases, and they are not all enforced in the same place.
+``DedupScope`` has three cases, and ``DedupingAnalytics`` enforces every one of them.
 
-| Scope | Means | Enforced by | How |
-|---|---|---|---|
-| ``DedupScope/episode`` | Once per exposure; counts again after leaving and returning | ``ImpressionTracker`` | An exposure is a screen-side concept, so the send path cannot see it. ``DedupingAnalytics`` passes it straight through |
-| ``DedupScope/session`` | Once while the app is running | ``DedupingAnalytics`` | An in-memory set on the instance, guarded by a lock. A new instance starts empty |
-| ``DedupScope/install`` | Once in the lifetime of the install | ``DedupingAnalytics`` | A boolean flag in `UserDefaults`, keyed by the event's `dedupKey`. Losing the defaults means counting once more, which is the safe direction |
-| ``DedupScope/always`` | Every time | nobody | Passed straight through. For interactions, the number of times is the measurement |
+| Scope | Means | How |
+|---|---|---|
+| ``DedupScope/session`` | Once while the app is running | An in-memory set on the instance, guarded by a lock. A new instance starts empty |
+| ``DedupScope/install`` | Once in the lifetime of the install | A boolean flag in `UserDefaults`, keyed by the event's `dedupKey`. Losing the defaults means counting once more, which is the safe direction |
+| ``DedupScope/always`` | Every time | Passed straight through. For interactions, the number of times is the measurement |
+
+## Per-exposure counting is not a scope
+
+Counting a display once per exposure — again after leaving and returning — is the rule
+``ImpressionTracker`` implements, and it is settled by *which mechanism fires the event*, not by a
+field on the event. A `screen` or an `impression` is fired through `trackScreen` or
+`trackImpression`, and those count once per exposure by construction.
+
+It is deliberately not a ``DedupScope`` case, because the send path could not enforce one. Scopes
+are keyed by ``AnalyticsEvent/dedupKey``, which ignores parameters: twenty rows of a list firing
+the same impression event share a key, so a per-exposure window applied there would collapse
+them into a single count. A scope that can only be honoured by the caller happening to pick the
+right firing mechanism is a claim nothing backs, so it is the mechanism that carries the rule.
 
 A suppressed send is dropped silently and is not counted anywhere. That is deliberate: the
 alternative — recording the suppression — turns the log into something that has to be reconciled,

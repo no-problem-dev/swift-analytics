@@ -63,7 +63,7 @@ public final class ImpressionSession {
     /// **However many times it is called within one exposure, it counts once.** A repeated
     /// `onAppear` after the send has happened does nothing at all.
     public func appeared() {
-        advance(tracker.visibility(1))
+        advance(tracker.visible(true))
     }
 
     /// Reports that it left the screen: drops any wait in flight and ends the exposure.
@@ -79,7 +79,7 @@ public final class ImpressionSession {
     /// Becoming visible starts the wait; becoming hidden drops it, so an element scrolled past
     /// before the dwell elapses is never counted.
     public func visibilityChanged(isVisible: Bool) {
-        advance(tracker.visibility(isVisible ? 1 : 0))
+        advance(tracker.visible(isVisible))
     }
 
     /// Reports a move between foreground and background.

@@ -19,15 +19,16 @@ public extension View {
     ///
     /// - Parameters:
     ///   - event: The occurrence to fire; ``AnalyticsCore/EventKind/screen`` is what this is for
-    ///   - threshold: Fraction treated as visible. A view that has appeared reports itself as
-    ///     entirely visible, so every value up to 1.0 behaves the same way here
     ///   - dwell: Seconds it has to stay before it counts
+    ///
+    /// - Note: There is no area threshold here on purpose. A whole screen has appeared or it has
+    ///   not — there is no fraction to compare — so a threshold could only be inert or, above 1.0,
+    ///   silently stop the event being counted at all.
     func trackScreen(
         _ event: any AnalyticsEvent,
-        threshold: Double = 0.5,
         dwell: TimeInterval = 1.0
     ) -> some View {
-        modifier(TrackScreenModifier(event: event, threshold: threshold, dwell: dwell))
+        modifier(TrackScreenModifier(event: event, dwell: dwell))
     }
 
     /// **Counts an element inside a scrolling container actually coming into view.**
@@ -38,7 +39,7 @@ public extension View {
     /// counts again.
     ///
     /// - Important: **It does not fire outside a scrolling container.** To count a screen itself,
-    ///   use ``SwiftUICore/View/trackScreen(_:threshold:dwell:)``. It deliberately does not fall back
+    ///   use ``SwiftUICore/View/trackScreen(_:dwell:)``. It deliberately does not fall back
     ///   to `onAppear` so as to work outside one — in a lazily built list, `onAppear` arrives for
     ///   rows that are off screen, which quietly mixes "counted as seen without being visible"
     ///   into the numbers.
@@ -72,7 +73,6 @@ private struct TrackScreenModifier: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
 
     let event: any AnalyticsEvent
-    let threshold: Double
     let dwell: TimeInterval
 
     @State private var session: ImpressionSession?
@@ -93,11 +93,7 @@ private struct TrackScreenModifier: ViewModifier {
     }
 
     private func makeSession() -> ImpressionSession {
-        ImpressionSession(
-            event: event,
-            client: analytics,
-            tracker: ImpressionTracker(threshold: threshold, dwell: dwell)
-        )
+        ImpressionSession(event: event, client: analytics, tracker: ImpressionTracker(dwell: dwell))
     }
 }
 
@@ -126,11 +122,10 @@ private struct TrackImpressionModifier: ViewModifier {
             }
     }
 
+    // `threshold` goes to `onScrollVisibilityChange` and stops there. It is the one place the area
+    // is actually compared, and applying it a second time inside the tracker would only add a
+    // second way for a value above 1.0 to zero the event.
     private func makeSession() -> ImpressionSession {
-        ImpressionSession(
-            event: event,
-            client: analytics,
-            tracker: ImpressionTracker(threshold: threshold, dwell: dwell)
-        )
+        ImpressionSession(event: event, client: analytics, tracker: ImpressionTracker(dwell: dwell))
     }
 }

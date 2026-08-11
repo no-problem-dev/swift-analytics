@@ -16,7 +16,7 @@ struct GeneratedCatalogTests {
     func carriesSchemaFacts() {
         #expect(ExampleEvent.tutorialBegin.name == "tutorial_begin")
         #expect(ExampleEvent.tutorialBegin.kind == .screen)
-        #expect(ExampleEvent.tutorialBegin.dedup == .episode)
+        #expect(ExampleEvent.tutorialBegin.dedup == .always)
 
         #expect(ExampleEvent.paywallShown(source: .soloCard).kind == .impression)
         #expect(ExampleEvent.stockFirstRecord(day: 0).dedup == .install)

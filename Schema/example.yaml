@@ -15,7 +15,7 @@ swift:
 events:
   - name: tutorial_begin
     kind: screen
-    dedup: episode
+    dedup: always
     description: 初回体験の 1 枚目に着いた
     trigger: OnboardingFlowView（同意画面からは撃たない）
 
@@ -30,7 +30,7 @@ events:
 
   - name: paywall_shown
     kind: impression
-    dedup: episode
+    dedup: always
     description: 課金の案内が実際に見えた
     trigger: PaywallView が 50% 以上 1 秒
     parameters:

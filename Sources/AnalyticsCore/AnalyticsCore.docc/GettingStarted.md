@@ -85,7 +85,7 @@ Button("Invite") {
 ```
 
 Screens and list rows are not. They go through the visibility rule described in
-<doc:CountingRules>, using the `trackScreen(_:threshold:dwell:)` and
+<doc:CountingRules>, using the `trackScreen(_:dwell:)` and
 `trackImpression(_:threshold:dwell:)` modifiers from `AnalyticsSwiftUI`.
 
 ## Bucket anything numeric

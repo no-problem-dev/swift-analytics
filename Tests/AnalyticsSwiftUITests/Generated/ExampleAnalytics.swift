@@ -55,9 +55,9 @@ public enum ExampleEvent: AnalyticsEvent {
 
     public var dedup: DedupScope {
         switch self {
-        case .tutorialBegin: return .episode
+        case .tutorialBegin: return .always
         case .tutorialComplete(_): return .always
-        case .paywallShown(_): return .episode
+        case .paywallShown(_): return .always
         case .stockFirstRecord(_): return .install
         }
     }

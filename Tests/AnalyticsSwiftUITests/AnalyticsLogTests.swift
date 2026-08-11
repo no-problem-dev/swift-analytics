@@ -37,7 +37,7 @@ struct AnalyticsLogTests {
         log.record(Event(name: "paywall_shown"))
 
         #expect(log.entries.first?.kind == .screen)
-        #expect(log.entries.first?.dedup == .episode)
+        #expect(log.entries.first?.dedup == .always)
     }
 
     @Test("属性は出来事と区別して残る")
@@ -72,7 +72,7 @@ private struct Event: AnalyticsEvent {
     let name: String
     var parameters: [String: AnalyticsValue] = [:]
     var kind: EventKind { .screen }
-    var dedup: DedupScope { .episode }
+    var dedup: DedupScope { .always }
 }
 
 private struct Property: AnalyticsUserProperty {

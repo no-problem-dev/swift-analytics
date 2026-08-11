@@ -41,7 +41,7 @@ GA4_RESERVED_NAMES = {
 }
 
 KINDS = {"screen", "impression", "interaction", "outcome"}
-SCOPES = {"episode", "session", "install", "always"}
+SCOPES = {"session", "install", "always"}
 PARAM_TYPES = {"enum", "count", "number", "flag", "bucket"}
 
 
@@ -322,9 +322,8 @@ def validate(schema: Schema) -> None:
             problems.append(f"{event.name}: kind が {sorted(KINDS)} のどれでもない（{event.kind}）")
         if event.dedup not in SCOPES:
             problems.append(f"{event.name}: dedup が {sorted(SCOPES)} のどれでもない（{event.dedup}）")
-        # 種別と数え方が噛み合っているか。表示を毎回数えると、滞在時間の条件が意味を失う。
-        if event.kind in {"screen", "impression"} and event.dedup == "always":
-            problems.append(f"{event.name}: 表示を always で数えている（episode か session を選ぶ）")
+        # 表示を 1 露出 1 回に留めるのは trackScreen / trackImpression の仕事で、dedup の役目ではない。
+        # 噛み合いの検査は「種別に合った撃ち方をしているか」（audit）へ移した。
         if event.case in seen_cases:
             problems.append(f"{event.case}: Swift の case 名が重複している")
         seen_cases.add(event.case)
@@ -632,6 +631,8 @@ def audit(schema: Schema, roots: list[Path]) -> list[str]:
                 if value not in [v for v in literal]:
                     problems.append(f"{event.name}.{parameter.key} = {value} を撃っている場所が無い")
 
+    problems += _audit_firing_mechanism(schema, sites)
+
     for prop in schema.properties:
         if not re.search(rf"\.{prop.case}\b", corpus):
             problems.append(f"属性 {prop.name}（.{prop.case}）を置いている場所が無い")
@@ -645,6 +646,32 @@ def audit(schema: Schema, roots: list[Path]) -> list[str]:
         if len(locations) > 1:
             problems.append(f"{signature} が {len(locations)} 箇所から出る: " + " / ".join(locations))
 
+    return problems
+
+
+# kind が撃ち方を決める。表示を 1 露出 1 回に留めているのは trackScreen / trackImpression
+# だけなので、screen / impression を track() で撃つと、その規則がどこにも掛からないまま通る。
+# **dedup にはもう表現できない規則**（DedupScope から episode を外した）ので、ここで落とす。
+MECHANISM_FOR_KIND = {
+    "screen": "trackScreen",
+    "impression": "trackImpression",
+    "interaction": "track",
+    "outcome": "track",
+}
+
+
+def _audit_firing_mechanism(schema: Schema, sites: list[tuple[str, str, str]]) -> list[str]:
+    problems: list[str] = []
+    for event in schema.events:
+        expected = MECHANISM_FOR_KIND[event.kind]
+        for entry, expression, location in sites:
+            if entry == "setUserProperty" or not re.search(rf"\.{event.case}\b", expression):
+                continue
+            if entry != expected:
+                problems.append(
+                    f"{event.name}: kind が {event.kind} なのに {entry}() で撃っている"
+                    f"（{expected}() を使う）: {location}"
+                )
     return problems
 
 

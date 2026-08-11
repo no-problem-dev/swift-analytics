@@ -77,7 +77,18 @@ public struct ImpressionTracker: Sendable, Equatable {
     ///
     /// - Parameter fraction: 0.0 for not visible at all, through 1.0 for entirely visible
     public mutating func visibility(_ fraction: Double) -> Action {
-        isVisible = fraction >= threshold
+        visible(fraction >= threshold)
+    }
+
+    /// Takes a visibility that has already been decided, and answers what to do about it.
+    ///
+    /// For callers holding a yes/no rather than an area: `onAppear` on a whole screen, which has no
+    /// fraction to measure, and `onScrollVisibilityChange(threshold:)`, which applied its own
+    /// threshold before calling. **Passing such an answer through ``visibility(_:)`` as the
+    /// fraction `1` would put it back under ``threshold``**, where a threshold above 1.0 turns
+    /// every yes into a no and the counting stops without a word.
+    public mutating func visible(_ isVisible: Bool) -> Action {
+        self.isVisible = isVisible
         return settle()
     }
 

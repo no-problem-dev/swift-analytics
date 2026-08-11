@@ -13,16 +13,17 @@ rather than in a store because the things being measured — a screen appeared, 
 are view events; putting it in a store would force a stateless screen to acquire one purely to
 report.
 
-**Two modifiers that apply the visibility rule.** `trackScreen(_:threshold:dwell:)` counts a screen
-once at least 50% of it has been continuously visible for a second, counts again after it leaves and
-returns, and does not count while the app is in the background.
+**Two modifiers that apply the visibility rule.** `trackScreen(_:dwell:)` counts a screen once it
+has been continuously on screen for a second, counts again after it leaves and returns, and does
+not count while the app is in the background. It takes no area threshold: a screen has appeared or
+it has not, so there is no fraction to compare.
 `trackImpression(_:threshold:dwell:)` does the same for a row inside a scrollable container, driven
 by `onScrollVisibilityChange`, and requires iOS 18 / macOS 15 / tvOS 18 / watchOS 11 / visionOS 2.
 
 `trackImpression(_:threshold:dwell:)` deliberately does **not** fall back to `onAppear` outside a
 scrollable container, because a lazy list delivers `onAppear` for rows that are still off screen —
 which quietly mixes "was never visible" into the count of "was seen". Use
-`trackScreen(_:threshold:dwell:)` when you mean the screen itself.
+`trackScreen(_:dwell:)` when you mean the screen itself.
 
 Neither modifier decides anything. Both forward to ``ImpressionSession``, which owns the tracker,
 the pending wait, and the send — so re-entrant `onAppear`, early dismissal, backgrounding, and
@@ -63,7 +64,7 @@ let analytics = DedupingAnalytics(MultiplexAnalytics([LoggingAnalytics(log: log)
 
 ### Counting a view
 
-- ``SwiftUICore/View/trackScreen(_:threshold:dwell:)``
+- ``SwiftUICore/View/trackScreen(_:dwell:)``
 - ``SwiftUICore/View/trackImpression(_:threshold:dwell:)``
 - ``ImpressionSession``
 

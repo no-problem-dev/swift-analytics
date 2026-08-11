@@ -49,5 +49,5 @@ private struct SampleEvent: AnalyticsEvent {
     var parameters: [String: AnalyticsValue]
     var name: String { "paywall_shown" }
     var kind: EventKind { .impression }
-    var dedup: DedupScope { .episode }
+    var dedup: DedupScope { .always }
 }

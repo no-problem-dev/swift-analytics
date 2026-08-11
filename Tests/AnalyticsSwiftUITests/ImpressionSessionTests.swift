@@ -147,6 +147,28 @@ struct ImpressionSessionTests {
         #expect(recorder.count(of: "screen_shown") == 1)
     }
 
+    /// The session never measures an area — it is handed a yes/no, by `onAppear` or by
+    /// `onScrollVisibilityChange`, which did the comparison already.
+    ///
+    /// It used to pass that yes/no on as the fraction `1`, so a threshold above 1.0 turned every
+    /// signal into "not visible" and **the screen stopped being counted without saying anything.**
+    /// `trackScreen(_:threshold:)` handed such a value straight through.
+    @Test("真偽値の合図は、面積のしきい値で黙って止まらない")
+    func booleanSignalIsNotGatedByAnAreaThreshold() async {
+        let recorder = RecordingAnalytics()
+        let session = ImpressionSession(
+            event: Screen(),
+            client: recorder,
+            tracker: ImpressionTracker(threshold: 1.5, dwell: 1),
+            sleep: noWait
+        )
+
+        session.appeared()
+        await session.settled()
+
+        #expect(recorder.count(of: "screen_shown") == 1)
+    }
+
     @Test("数えたことは外から見える")
     func exposesWhetherItFired() async {
         let recorder = RecordingAnalytics()
@@ -163,5 +185,5 @@ private struct Screen: AnalyticsEvent {
     var name: String { "screen_shown" }
     var parameters: [String: AnalyticsValue] { [:] }
     var kind: EventKind { .screen }
-    var dedup: DedupScope { .episode }
+    var dedup: DedupScope { .always }
 }

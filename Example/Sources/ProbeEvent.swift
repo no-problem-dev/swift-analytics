@@ -17,5 +17,5 @@ enum ProbeEvent: String, AnalyticsEvent, CaseIterable {
     var name: String { rawValue }
     var parameters: [String: AnalyticsValue] { [:] }
     var kind: EventKind { self == .row || self == .offscreen ? .impression : .screen }
-    var dedup: DedupScope { .episode }
+    var dedup: DedupScope { .always }
 }

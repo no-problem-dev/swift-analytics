@@ -40,7 +40,7 @@ events:
   - name: paywall_shown            # 送信先へ送る名前。snake_case
     case: paywallShown             # 任意。省略時は name から lowerCamelCase を作る
     kind: impression               # screen | impression | interaction | outcome
-    dedup: episode                 # episode | session | install | always
+    dedup: always                  # session | install | always
     description: ふたりプランの案内が実際に見えた
     trigger: PaywallView が 50% 以上 1 秒       # 任意。どこで撃つかの申し送り
     parameters:
@@ -103,7 +103,6 @@ facts:
 | Swift の型名の衝突 | 生成物がコンパイルできない形にしない |
 | 方言の制約（`dialect: ga4` なら名前 40 字・パラメータ 25 個・値 100 字・予約語） | **破った送信は成功に見えて捨てられる** |
 | `enum` 値が snake_case か | 送信先で値の集合が割れない |
-| `kind: impression` なのに `dedup: always` のような噛み合わない組 | 数え方が種別と矛盾していないか |
 
 `audit` は実装側を見る。
 
@@ -111,5 +110,6 @@ facts:
 |---|---|
 | カタログの全ケース・全値が 1 箇所以上から撃たれているか | 宣言だけ残ると、ダッシュボードの 0 が「使われていない」と読める |
 | **同じ発火（引数まで込みで同じもの）が 2 箇所以上に無いか** | 1 回の閲覧で複数回撃つ事故は、テストでもレビューでも落ちない |
+| **`kind` に合った撃ち方をしているか**（`screen`→`trackScreen` / `impression`→`trackImpression` / `interaction`・`outcome`→`track`） | 表示を 1 露出 1 回に留めるのはこの 2 つだけ。`track()` で撃つと、その規則がどこにも掛からない |
 | 属性が 1 箇所以上から設定されているか | 宣言だけの属性はセグメントが空になる |
 | 文字列直書きの送信が無いか | カタログを迂回されると検査が意味を失う |

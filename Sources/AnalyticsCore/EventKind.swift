@@ -41,13 +41,17 @@ public enum EventKind: String, Sendable, CaseIterable {
 /// it was, and neither the types, nor the tests, nor the dashboard could say anything was wrong.
 ///
 /// With "once per install" in the catalog, the second firing point fails the check.
+///
+/// ## Every case is a send-layer window
+///
+/// Every case here narrows repeats at the point the event is sent, and ``DedupingAnalytics``
+/// enforces all of them. **Per-exposure counting is deliberately absent**: an exposure is a
+/// view-level span the send path cannot see, and the send path keys on
+/// ``AnalyticsEvent/dedupKey``, which ignores parameters — so twenty rows of a list firing the same
+/// impression would collapse into one. That rule belongs to, and is enforced by,
+/// ``ImpressionTracker`` and the kind of event it is (``EventKind/screen``,
+/// ``EventKind/impression``), not to a scope declared here.
 public enum DedupScope: String, Sendable, CaseIterable {
-
-    /// Once per exposure. Leaving the screen and coming back counts again.
-    ///
-    /// Enforced by ``ImpressionTracker``, since where an exposure ends is a view-level notion the
-    /// sending side cannot follow. ``DedupingAnalytics`` passes these straight through.
-    case episode
 
     /// Once while the app is running.
     ///

@@ -61,15 +61,20 @@ struct DedupingAnalyticsTests {
         #expect(recorder.count(of: "first_alert") == 1)
     }
 
-    @Test("episode はここでは触らない（画面の概念なので ImpressionTracker が持つ）")
-    func leavesEpisodeToTheView() {
+    /// Every scope has to narrow something, or its name is a claim nothing backs.
+    ///
+    /// Written over ``DedupScope/allCases`` rather than case by case, so that **a scope added later
+    /// with no enforcement behind it fails here instead of shipping.** ``DedupScope/always`` is the
+    /// one that says it narrows nothing; every other case has to collapse a repeat.
+    @Test("always 以外は、宣言した窓が実際に repeat を落とす", arguments: DedupScope.allCases)
+    func everyScopeNarrowsWhatItClaims(scope: DedupScope) {
         let recorder = RecordingAnalytics()
         let analytics = DedupingAnalytics(recorder, defaults: makeDefaults())
 
-        analytics.track(TestEvent(name: "screen", dedup: .episode))
-        analytics.track(TestEvent(name: "screen", dedup: .episode))
+        analytics.track(TestEvent(name: "occurrence", dedup: scope))
+        analytics.track(TestEvent(name: "occurrence", dedup: scope))
 
-        #expect(recorder.count(of: "screen") == 2)
+        #expect(recorder.count(of: "occurrence") == (scope == .always ? 2 : 1))
     }
 
     @Test("属性は間引かない")

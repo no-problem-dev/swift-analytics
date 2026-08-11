@@ -18,8 +18,10 @@ import Foundation
 /// |---|---|
 /// | ``DedupScope/install`` | A flag in `UserDefaults` under `analytics.fired.<key>`, so the window spans launches and closes for good. Losing the store costs one extra count |
 /// | ``DedupScope/session`` | A set held by this instance, so the window is this object's lifetime — in an app, the process |
-/// | ``DedupScope/episode`` | **Nothing happens.** Where an exposure ends is a view-level notion, so ``ImpressionTracker`` holds it |
 /// | ``DedupScope/always`` | Straight through |
+///
+/// Every case is handled here, so a scope added to ``DedupScope`` without a window to enforce
+/// stops the build rather than passing straight through unnoticed.
 ///
 /// A repeat inside a closed window is dropped in silence: nothing is forwarded, nothing is
 /// counted anywhere, and ``track(_:)`` returns exactly as it does for an event that was sent.
@@ -63,7 +65,7 @@ public final class DedupingAnalytics: AnalyticsClient, @unchecked Sendable {
 
     private func shouldSend(_ event: any AnalyticsEvent) -> Bool {
         switch event.dedup {
-        case .always, .episode:
+        case .always:
             return true
         case .session:
             lock.lock()
