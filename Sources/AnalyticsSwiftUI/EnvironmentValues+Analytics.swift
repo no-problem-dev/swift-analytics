@@ -7,13 +7,14 @@ private struct AnalyticsClientKey: EnvironmentKey {
 
 public extension EnvironmentValues {
 
-    /// 画面から計測へ届く口。
+    /// The way a view reaches measurement.
     ///
-    /// 既定は ``AnalyticsCore/NoopAnalytics`` なので、プレビューもテストも配線なしで動く。
+    /// The default is ``AnalyticsCore/NoopAnalytics``, so previews and tests run with nothing
+    /// wired up.
     ///
-    /// ストアではなく Environment に置くのは、発火点が「画面が出た」「ボタンが押された」という
-    /// View の出来事だから。ストアに持たせると、状態を持たない画面が計測のためだけに
-    /// ストアを要ることになる。
+    /// It sits in the environment rather than in a store because firing points are view events —
+    /// a screen appeared, a button was pressed. Held in a store, a screen with no state of its own
+    /// would need one purely in order to measure.
     var analytics: any AnalyticsClient {
         get { self[AnalyticsClientKey.self] }
         set { self[AnalyticsClientKey.self] = newValue }
@@ -22,7 +23,9 @@ public extension EnvironmentValues {
 
 public extension View {
 
-    /// 計測の実体を配る。**合成ルートがルートで 1 度だけ張る。**
+    /// Hands the real client to this view and everything below it.
+    ///
+    /// **The composition root does this once, at the root.**
     func analytics(_ client: any AnalyticsClient) -> some View {
         environment(\.analytics, client)
     }

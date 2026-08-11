@@ -2,10 +2,11 @@ import AnalyticsCore
 import Foundation
 import Observation
 
-/// 出た回数を数えて画面に出すだけの送信口。
+/// A client that only counts what came out and puts the counts on screen.
 ///
-/// **XCUITest が読むのはこの数字。** スクリーンショットの目視では回数のずれを見つけられない
-/// ——「1 回のはずが 2 回」も「戻ってきたのに数え直していない」も、絵は同じになる。
+/// **This is the number the XCUITests read.** Eyeballing a screenshot cannot find a difference in
+/// counts — "twice where once was meant" and "came back but never counted again" both look
+/// identical in a picture.
 @MainActor
 @Observable
 final class ProbeRecorder: AnalyticsClient {
@@ -20,7 +21,9 @@ final class ProbeRecorder: AnalyticsClient {
 
     func reset() { counts.removeAll() }
 
-    /// `screen=1 row=0 …` の形。XCUITest はこの 1 本の文字列だけを見る。
+    /// One line holding the count for every case, and the only thing the XCUITests look at.
+    ///
+    /// Rendered as `screen=1 sheet=0 row=0 offscreen=0`.
     var readout: String {
         ProbeEvent.allCases
             .map { "\($0.rawValue)=\(counts[$0.rawValue] ?? 0)" }
@@ -28,11 +31,12 @@ final class ProbeRecorder: AnalyticsClient {
     }
 }
 
-/// 起動引数で変えられる設定。
+/// Settings that can be changed from the launch arguments.
 ///
-/// 「1 秒たたずに離れたら数えない」を確かめるには、**テストの操作が滞在時間より速く
-/// 終わる保証**が要る。シミュレータの遷移アニメーションは端末や負荷で伸びるので、
-/// そこだけ滞在時間を延ばして確実に間に合わせる。
+/// Checking "leaving before a second has passed does not count" needs **a guarantee that the
+/// test's interaction finishes faster than the dwell**. Simulator transition animations stretch
+/// with the device and the load, so that one case extends the dwell to be sure of arriving in
+/// time.
 enum ProbeConfig {
     static var dwell: TimeInterval {
         let arguments = ProcessInfo.processInfo.arguments

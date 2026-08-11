@@ -1,10 +1,10 @@
 import Testing
 @testable import AnalyticsCore
 
-/// 「見えた」の定義を固定する。
+/// Pins the definition of "was seen".
 ///
-/// **シミュレータも実時間の待ちも使わない。** 時計を持たない作りにしてあるので、
-/// 数え方の正しさは純粋な状態遷移として確かめられる。
+/// **No simulator and no waiting in real time.** Nothing here holds a clock, so whether the
+/// counting is right can be checked as pure state transitions.
 @Suite("見えたの定義")
 struct ImpressionTrackerTests {
 
@@ -34,7 +34,7 @@ struct ImpressionTrackerTests {
         var tracker = ImpressionTracker()
         _ = tracker.visibility(1)
         #expect(tracker.dwellCompleted() == true)
-        // 同じ露出の中では二度数えない
+        // Never counted twice within one exposure
         #expect(tracker.dwellCompleted() == false)
     }
 

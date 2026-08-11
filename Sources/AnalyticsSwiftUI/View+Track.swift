@@ -3,13 +3,14 @@ import SwiftUI
 
 public extension View {
 
-    /// **画面に着いたことを数える。**
+    /// **Counts arriving at a screen.**
     ///
-    /// 面積の 50% 以上が 1 秒以上連続して見えたら 1 回（``AnalyticsCore/ImpressionTracker``）。
-    /// 画面から外れて戻ればまた数え、背面に落ちている間は数えない。
+    /// Once the view has appeared and stayed for `dwell` seconds with the app in the foreground,
+    /// that counts once. Leaving the screen and coming back counts again, and time spent in the
+    /// background does not count.
     ///
-    /// 一瞬よぎっただけの表示を落とすのが要点 —— ペイウォールを読んだ人と、
-    /// ペイウォールが一瞬映った人を同じ数字にしない。
+    /// Dropping the display that merely flashed past is the point — the person who read the
+    /// paywall and the person it flashed past should not land on the same number.
     ///
     /// ```swift
     /// PaywallView(...)
@@ -17,9 +18,10 @@ public extension View {
     /// ```
     ///
     /// - Parameters:
-    ///   - event: 撃つ出来事。``AnalyticsCore/EventKind/screen`` を想定している
-    ///   - threshold: 可視とみなす割合。画面では通常そのままでよい
-    ///   - dwell: 連続して見えている必要のある秒数
+    ///   - event: The occurrence to fire; ``AnalyticsCore/EventKind/screen`` is what this is for
+    ///   - threshold: Fraction treated as visible. A view that has appeared reports itself as
+    ///     entirely visible, so every value up to 1.0 behaves the same way here
+    ///   - dwell: Seconds it has to stay before it counts
     func trackScreen(
         _ event: any AnalyticsEvent,
         threshold: Double = 0.5,
@@ -28,16 +30,25 @@ public extension View {
         modifier(TrackScreenModifier(event: event, threshold: threshold, dwell: dwell))
     }
 
-    /// **スクロールできる器の中で、要素が実際に見えたことを数える。**
+    /// **Counts an element inside a scrolling container actually coming into view.**
     ///
-    /// 判定は `onScrollVisibilityChange` に載せる。しきい値の既定 0.5 が、
-    /// そのまま採った定義（面積の 50%）と一致する。
+    /// The judgement rides on `onScrollVisibilityChange`, whose threshold defaults to 0.5 and so
+    /// lines up with the definition taken from advertising measurement (50% of the area). Once the
+    /// element has been visible for `dwell` seconds, that counts once; scrolling it away and back
+    /// counts again.
     ///
-    /// - Important: **スクロールできる器の外では発火しない。** 画面そのものを数えたいなら
-    ///   ``SwiftUI/View/trackScreen(_:threshold:dwell:)`` を使う。
-    ///   器の外でも動くように `onAppear` へ落とす作りにはしていない ——
-    ///   遅延生成の一覧では画面外の行にも `onAppear` が来るので、
-    ///   「見えていないのに見えたことになる」数字が静かに混ざる。
+    /// - Important: **It does not fire outside a scrolling container.** To count a screen itself,
+    ///   use ``SwiftUICore/View/trackScreen(_:threshold:dwell:)``. It deliberately does not fall back
+    ///   to `onAppear` so as to work outside one — in a lazily built list, `onAppear` arrives for
+    ///   rows that are off screen, which quietly mixes "counted as seen without being visible"
+    ///   into the numbers.
+    ///
+    /// - Parameters:
+    ///   - event: The occurrence to fire; ``AnalyticsCore/EventKind/impression`` is what this is
+    ///     for
+    ///   - threshold: Fraction of the element's area that has to be on screen. Unlike on a whole
+    ///     screen, this one is measured
+    ///   - dwell: Seconds it has to stay visible before it counts
     @available(iOS 18.0, macOS 15.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
     func trackImpression(
         _ event: any AnalyticsEvent,
@@ -48,11 +59,12 @@ public extension View {
     }
 }
 
-// MARK: - 実装
+// MARK: - Implementation
 //
-// **どちらも ``ImpressionSession`` へ流すだけにしてある。**
-// 判断も待ちもここには無いので、テストは Session の側に書ける
-// （ViewModifier は画面を描かないと動かせず、そこに条件分岐を置くと確かめられなくなる）。
+// **Both do nothing but feed ``ImpressionSession``.**
+// Neither the judgement nor the waiting lives here, so the tests can be written on the session
+// side (a ViewModifier cannot be run without drawing a screen, and a branch placed in one becomes
+// impossible to check).
 
 private struct TrackScreenModifier: ViewModifier {
 
@@ -73,7 +85,8 @@ private struct TrackScreenModifier: ViewModifier {
                 session.appeared()
             }
             .onDisappear { session?.disappeared() }
-            // 前面に戻ったら数え直す。**通知から戻ってきた人は、その画面を見ている。**
+            // Count again on the way back to the foreground. **Someone returning from a
+            // notification is looking at that screen.**
             .onChange(of: scenePhase) { _, phase in
                 session?.sceneChanged(isActive: phase == .active)
             }

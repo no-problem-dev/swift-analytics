@@ -1,97 +1,111 @@
 import Foundation
 
-/// 「見えた」の定義を 1 箇所に閉じる状態機械。
+/// A state machine that shuts the definition of "was seen" inside one place.
 ///
-/// ## なぜ `onAppear` では足りないのか
+/// ## Why `onAppear` is not enough
 ///
-/// `onAppear` は「人が見た」を意味しない。View の同一性が変われば再入し、変わらなければ
-/// 二度と来ず、0.05 秒よぎっただけでも来る。どれも「何回見たか」とは関係が無い。
-/// 素朴に `@State` で 1 回に絞っても、絞られるのは View の一生であって、人の閲覧ではない。
+/// `onAppear` does not mean a person saw anything. It comes again when the view's identity
+/// changes, never comes again when it does not, and arrives for something that flashed past in
+/// 0.05 seconds. None of that has anything to do with how many times something was seen. Naively
+/// narrowing it to once with `@State` narrows to the life of a view, not to a person's viewing.
 ///
-/// ## 採る定義
+/// ## The definition taken
 ///
-/// 広告計測で決着している基準（MRC のモバイルアプリ内表示計測ガイドライン）に合わせる。
+/// The one settled in advertising measurement: the MRC's mobile in-app viewable impression
+/// guidelines.
 ///
-/// > **面積の 50% 以上が、連続して 1.0 秒以上見えていたら 1 回。**
+/// > **At least 50% of the area, visible continuously for at least 1.0 second, counts once.**
 ///
-/// 「業界標準だから」ではなく、**時間を入れないと定義が閉じないから**。面積だけでは
-/// 「一瞬映った」を排除できず、`onAppear` の穴がそのまま残る。ペイウォールを読んだ人と、
-/// ペイウォールが一瞬映った人が同じ数字になる。
+/// Not because it is the industry standard, but because **the definition does not close without a
+/// duration in it**. Area alone cannot rule out the momentary flash, which leaves the `onAppear`
+/// hole exactly where it was: the person who read the paywall and the person it flashed past land
+/// on the same number.
 ///
-/// ## 時計を持たない
+/// ## It holds no clock
 ///
-/// 「何秒待て」を返すだけで、待つのは呼ぶ側の仕事にしてある。おかげで
-/// **シミュレータも実時間の待ちもなしに**、次のような性質をそのまま固定できる。
+/// It only answers how many seconds to wait; waiting is the caller's job. That is what lets these
+/// properties be pinned **with no simulator and no waiting in real time**.
 ///
 /// ```swift
 /// var tracker = ImpressionTracker()
 /// #expect(tracker.visibility(1.0) == .startDwell(1.0))
 /// #expect(tracker.visibility(0.0) == .cancelDwell)
-/// #expect(tracker.dwellCompleted() == false)   // 0.9 秒で消えたら数えない
+/// #expect(tracker.dwellCompleted() == false)   // gone at 0.9 seconds, so not counted
 /// ```
 public struct ImpressionTracker: Sendable, Equatable {
 
-    /// 呼ぶ側にしてほしいこと。
+    /// What the caller is being asked to do.
     public enum Action: Sendable, Equatable {
 
-        /// この秒数だけ見え続けたら ``ImpressionTracker/dwellCompleted()`` を呼ぶ。
+        /// Wait this many seconds, and if it stays visible throughout, call
+        /// ``ImpressionTracker/dwellCompleted()``.
         case startDwell(TimeInterval)
 
-        /// 待つのをやめる（見えなくなった、または背面に落ちた）。
+        /// Stop waiting: it went out of view, or the app dropped into the background.
         case cancelDwell
 
-        /// 何もしない。
+        /// Nothing to do — it has already been counted in this exposure.
         case none
     }
 
-    /// 可視とみなす面積の割合。
+    /// Fraction of the area that has to be visible before it counts as visible at all.
     public let threshold: Double
 
-    /// 連続して見えている必要のある秒数。
+    /// Seconds it has to stay continuously visible before it counts.
     public let dwell: TimeInterval
 
     private var isVisible = false
     private var isForeground = true
 
-    /// この露出の一区切りで、もう数えたか。
+    /// Whether this exposure has already been counted; cleared by ``endEpisode()``.
     public private(set) var hasFired = false
 
     /// - Parameters:
-    ///   - threshold: 可視とみなす面積の割合。既定は 0.5（MRC 基準）
-    ///   - dwell: 連続して見えている必要のある秒数。既定は 1.0（MRC 基準の表示広告）
+    ///   - threshold: Fraction of the area treated as visible. 0.5 is the MRC figure
+    ///   - dwell: Seconds it has to stay visible without a break. 1.0 is the MRC figure for
+    ///     display advertising
     public init(threshold: Double = 0.5, dwell: TimeInterval = 1.0) {
         self.threshold = threshold
         self.dwell = dwell
     }
 
-    /// 見えている割合が変わった。
+    /// Takes a new visible fraction and answers what to do about it.
     ///
-    /// スクロールの可視通知や、`onAppear` / `onDisappear` から流す。
-    /// - Parameter fraction: 0.0（まったく見えない）〜 1.0（全部見えている）
+    /// Feed it from a scroll visibility notification, or from `onAppear` and `onDisappear`. It
+    /// asks for a wait as soon as the fraction reaches the threshold, and asks for that wait to be
+    /// dropped as soon as it falls below.
+    ///
+    /// - Parameter fraction: 0.0 for not visible at all, through 1.0 for entirely visible
     public mutating func visibility(_ fraction: Double) -> Action {
         isVisible = fraction >= threshold
         return settle()
     }
 
-    /// 前面／背面が変わった。
+    /// Takes a move between foreground and background, and answers what to do about it.
     ///
-    /// **背面では、画面に出ていても人は見ていない。** 通知を開いた・アプリを切り替えた間に
-    /// 数え続けると、滞在時間の条件が意味を失う。
+    /// **In the background, nobody is looking, whatever is on screen.** Counting on through the
+    /// time spent in an opened notification or another app would empty the dwell condition of its
+    /// meaning. Coming back to the foreground asks for the wait to start over from the beginning.
     public mutating func foreground(_ active: Bool) -> Action {
         isForeground = active
         return settle()
     }
 
-    /// 露出の一区切りが終わった（画面から外れた）。次に見えたら、また数える。
+    /// Ends this exposure, so that becoming visible again counts again.
+    ///
+    /// Marks it as no longer visible and clears ``hasFired``. Any wait already in flight stays the
+    /// caller's to cancel.
     public mutating func endEpisode() {
         isVisible = false
         hasFired = false
     }
 
-    /// 待ち時間が満了した。**`true` のときだけ数える。**
+    /// Reports that the wait ran out, and answers whether this one counts.
     ///
-    /// 満了までに見えなくなっていれば `false` を返す。待っている間に条件が崩れていないかは、
-    /// タイマーの取り消しではなくここで判定する —— 取り消し漏れを数え違いに変えないため。
+    /// True at most once per exposure, and only while the element is still visible and the app is
+    /// still in the foreground. Whether the conditions held throughout the wait is decided here
+    /// rather than by cancelling the timer — so that a cancellation missed on the way never turns
+    /// into a wrong count.
     public mutating func dwellCompleted() -> Bool {
         guard isCountable, !hasFired else { return false }
         hasFired = true

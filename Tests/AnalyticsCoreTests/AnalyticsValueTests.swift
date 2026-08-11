@@ -35,7 +35,7 @@ struct DebugLineTests {
     @Test("パラメータは鍵で整列する")
     func sortsParametersByKey() {
         let event = SampleEvent(parameters: ["source": .text("teaser"), "count": .count(2)])
-        // 辞書の並びは実行のたびに変わる。整列していないとテストの期待値にできない
+        // Dictionary order changes between runs; unsorted, this could not be an expected value
         #expect(event.debugLine == "paywall_shown count=2 source=teaser")
     }
 

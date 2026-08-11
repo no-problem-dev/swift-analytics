@@ -1,39 +1,52 @@
 import Foundation
 
-/// カタログの ``DedupScope`` を実施する層。**発火点から「もう撃ったか」の判断を取り上げる。**
+/// Applies the catalog's counting rule before forwarding, so no firing point has to ask whether
+/// it already fired.
 ///
-/// これが無いと、発火点の側に `guard alreadyFired == false else { return }` を書くことになる。
-/// 撃つ場所が 2 つある出来事では同じ判定が 2 箇所に散り、片方だけ直る形になる。
-/// 数え方はカタログが持っているのだから、実施も 1 箇所に畳む。
+/// Without this layer, `guard alreadyFired == false else { return }` ends up at the firing point.
+/// For an event fired from two places, the same check is scattered across both, and only one of
+/// them gets fixed. The catalog already holds the counting rule, so enforcing it collapses into
+/// one place as well.
 ///
 /// ```swift
 /// let analytics = DedupingAnalytics(MultiplexAnalytics([ConsoleAnalytics(), firebase]))
 /// ```
 ///
-/// ## 範囲ごとの扱い
+/// ## What each scope means here
 ///
-/// | 範囲 | ここでの扱い |
+/// | Scope | Handling |
 /// |---|---|
-/// | ``DedupScope/install`` | `UserDefaults` の印。消えても最悪もう一度数えるだけ |
-/// | ``DedupScope/session`` | このオブジェクトが生きている間の記憶 |
-/// | ``DedupScope/episode`` | **何もしない。**露出の一区切りは画面の概念なので ``ImpressionTracker`` が持つ |
-/// | ``DedupScope/always`` | 素通し |
+/// | ``DedupScope/install`` | A flag in `UserDefaults` under `analytics.fired.<key>`, so the window spans launches and closes for good. Losing the store costs one extra count |
+/// | ``DedupScope/session`` | A set held by this instance, so the window is this object's lifetime — in an app, the process |
+/// | ``DedupScope/episode`` | **Nothing happens.** Where an exposure ends is a view-level notion, so ``ImpressionTracker`` holds it |
+/// | ``DedupScope/always`` | Straight through |
 ///
-/// 属性（``AnalyticsUserProperty``）は間引かない。属性は「いまの状態」なので、
-/// 同じ値を何度置いても結果が変わらず、間引くと復元時に古い値が残る。
+/// A repeat inside a closed window is dropped in silence: nothing is forwarded, nothing is
+/// counted anywhere, and ``track(_:)`` returns exactly as it does for an event that was sent.
+///
+/// Which occurrences count as the same one is decided by ``AnalyticsEvent/dedupKey``, which by
+/// default is the name alone — two occurrences differing only in their parameters collapse
+/// together.
+///
+/// User properties (``AnalyticsUserProperty``) are never thinned out. A property is current
+/// state, so setting the same value again changes nothing, and dropping the repeat would leave a
+/// stale value in place after a restore.
 public final class DedupingAnalytics: AnalyticsClient, @unchecked Sendable {
 
     private let wrapped: any AnalyticsClient
     private let defaults: UserDefaults
 
-    /// `firedThisSession` を守る。`Sendable` を手で請け負っているのはこの 1 つの可変状態のためで、
-    /// 触る経路は ``track(_:)`` しかない。
+    /// Guards the session set, and keeps the install flag's read-then-write from interleaving.
+    ///
+    /// This one piece of mutable state is why `Sendable` is vouched for by hand here, and
+    /// ``track(_:)`` is the only path that reaches it.
     private let lock = NSLock()
     private var firedThisSession: Set<String> = []
 
     /// - Parameters:
-    ///   - wrapped: 実際に送る先
-    ///   - defaults: ``DedupScope/install`` の印を置く場所。テストでは専用のスイートを渡す
+    ///   - wrapped: Where the occurrences that survive are actually sent
+    ///   - defaults: Where ``DedupScope/install`` flags are kept. Tests pass a suite of their own,
+    ///     since the flags never expire on their own
     public init(_ wrapped: any AnalyticsClient, defaults: UserDefaults = .standard) {
         self.wrapped = wrapped
         self.defaults = defaults

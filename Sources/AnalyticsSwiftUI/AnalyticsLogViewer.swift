@@ -2,34 +2,36 @@ import AnalyticsCore
 import Foundation
 import SwiftUI
 
-/// 直近に撃った計測を覚えておく箱。
+/// An in-memory record of what was measured most recently, readable on the device itself.
 ///
-/// ## なぜ端末の中に要るのか
+/// ## Why it has to be on the device
 ///
-/// 送信先のデバッグ画面は反映に間があり、`os.Logger` は Mac に繋がないと読めない。
-/// そして **このアプリで一番確かめたい発火は、通知から戻ってきたときのもの** ——
-/// Xcode を繋いだ状態では再現しにくく、再現できても数十秒かかる。
+/// A destination's debug view lags behind, and `os.Logger` cannot be read without a Mac attached.
+/// And **the firing this app most wants to check is the one that happens on the way back from a
+/// notification** — hard to reproduce with Xcode attached, and tens of seconds each time when it
+/// can be.
 ///
-/// 送信の代わりではない。``AnalyticsCore/MultiplexAnalytics`` で本番送信と並べて使う。
+/// It does not replace sending. Put it alongside the real client with
+/// ``AnalyticsCore/MultiplexAnalytics``.
 @MainActor
 @Observable
 public final class AnalyticsLog {
 
-    /// 1 行ぶんの記録。
+    /// One recorded line.
     public struct Entry: Identifiable, Sendable {
         public let id = UUID()
-        /// 撃った時刻。
+        /// When the log took it in, which is a moment after the client was called.
         public let at: Date
-        /// 出来事の名前、または属性の名前。
+        /// Name of the occurrence, or of the property.
         public let name: String
-        /// `key=value` を並べたもの。無ければ空。
+        /// Parameters laid out as `key=value`, or empty when there were none.
         public let detail: String
-        /// 出来事の類。属性のときは nil。
+        /// Sort of occurrence, or nil when this line records a property.
         public let kind: EventKind?
-        /// 数え方。属性のときは nil。
+        /// Counting rule, or nil when this line records a property.
         public let dedup: DedupScope?
 
-        /// 属性の記録か。
+        /// Whether this line records a property, which is also why it carries no sort or rule.
         public var isProperty: Bool { kind == nil }
     }
 
@@ -37,12 +39,15 @@ public final class AnalyticsLog {
 
     private let limit: Int
 
-    /// - Parameter limit: 覚えておく件数。古いものから捨てる
+    /// - Parameter limit: How many lines to keep; the oldest are dropped once it is exceeded
     public init(limit: Int = 200) {
         self.limit = limit
     }
 
-    /// 出来事を積む。**新しい順に並ぶ。**
+    /// Takes in one occurrence. **Newest first.**
+    ///
+    /// Nothing is thinned out here: an occurrence that arrived twice appears twice, which is the
+    /// whole point of reading this on the device. Parameters are laid out sorted by key.
     public func record(_ event: any AnalyticsEvent) {
         let detail = event.parameters
             .sorted { $0.key < $1.key }
@@ -53,7 +58,7 @@ public final class AnalyticsLog {
         )
     }
 
-    /// 属性を積む。
+    /// Takes in one property, with its value standing in for the parameters.
     public func record(_ property: any AnalyticsUserProperty) {
         append(
             Entry(at: Date(), name: property.name, detail: property.value, kind: nil, dedup: nil)
@@ -64,7 +69,10 @@ public final class AnalyticsLog {
         entries.removeAll()
     }
 
-    /// ある名前が何回出たか。**「1 回のはずが 2 回出ている」を端末で見つけるための数字。**
+    /// How many of the lines still held carry this name.
+    ///
+    /// **The number that catches "fired twice where once was meant" on the device.** It reaches
+    /// back only as far as the lines that have not yet been dropped.
     public func count(of name: String) -> Int {
         entries.filter { $0.name == name }.count
     }
@@ -77,7 +85,10 @@ public final class AnalyticsLog {
     }
 }
 
-/// 撃った計測を ``AnalyticsLog`` に控える送信口。
+/// A client that files what was measured into an ``AnalyticsLog`` instead of sending it out.
+///
+/// Filing hops to the main actor, so a line shows up a moment after the call rather than during
+/// it.
 public struct LoggingAnalytics: AnalyticsClient {
 
     private let log: AnalyticsLog
@@ -95,13 +106,15 @@ public struct LoggingAnalytics: AnalyticsClient {
     }
 }
 
-/// 直近の計測を出た順に並べる面。**開発メニューから開く。**
+/// A screen listing recent measurements in the order they fired. **Opened from a developer menu.**
 ///
-/// 見せているのは 3 つ。
+/// It shows three things.
 ///
-/// - **何が出たか**（名前と引数）
-/// - **どう数えるはずのものか**（種別と数え方）—— 期待とずれた瞬間に目で分かる
-/// - **何回出たか** —— 2 回以上出ているものは色を変える。計測の事故はたいてい「出すぎ」
+/// - **What came out** (name and parameters)
+/// - **How it was meant to be counted** (sort and rule) — a departure from the intent is visible
+///   the moment it happens
+/// - **How many times it came out** — anything past one is coloured, because measurement
+///   accidents are usually one too many
 public struct AnalyticsLogViewer: View {
 
     private let log: AnalyticsLog
@@ -116,7 +129,8 @@ public struct AnalyticsLogViewer: View {
     public var body: some View {
         List {
             if log.entries.isEmpty {
-                // 空は「壊れている」ではなく「まだ撃っていない」。取り違えないよう言葉にしておく。
+                // Empty means "nothing has fired yet", not "this is broken". Say so, so the two
+                // are not mistaken for each other.
                 ContentUnavailableView(
                     "まだ何も撃っていません",
                     systemImage: "waveform",
@@ -161,8 +175,8 @@ public struct AnalyticsLogViewer: View {
                 Spacer(minLength: 0)
                 let count = log.count(of: entry.name)
                 if count > 1 {
-                    // **出すぎに気づけるようにする。** 1 回のはずのものが並んでいたら、
-                    // それは配線の事故で、ダッシュボードでは見つからない。
+                    // **Make firing too often noticeable.** A run of something meant to fire once
+                    // is a wiring accident, and the dashboard will not find it.
                     Text("×\(count)")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.orange)

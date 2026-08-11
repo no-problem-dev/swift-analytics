@@ -42,7 +42,7 @@ jobs:
 
       - name: Inject package overview into combined root
         run: |
-          python3 - ./docs structureddatacore <<'PY'
+          python3 - ./docs analyticscore <<'PY'
           import json, os, sys
           docs, core = sys.argv[1], sys.argv[2].lower()
           root_p = os.path.join(docs, "data", "documentation.json")

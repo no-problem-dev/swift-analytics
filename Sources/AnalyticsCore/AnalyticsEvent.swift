@@ -1,48 +1,55 @@
-/// アプリで起きた 1 つの出来事。
+/// One thing that happened in the app.
 ///
-/// 準拠する型は**アプリごとに生成する**（`Scripts/analytics-gen.py` が `analytics.yaml` から書き出す）。
-/// 手で書いてもよいが、そのときも生成物と同じ形を保つこと —— 生成に切り替えるときに
-/// 発火点を書き換えずに済む。
+/// Conforming types are **generated per app** (`Scripts/analytics-gen.py` writes them out from
+/// `analytics.yaml`). Writing one by hand is fine, but keep the shape the generator produces, so
+/// that switching to generation later leaves the firing points untouched.
 ///
-/// ## 名前とパラメータは型から導く
+/// ## Names and parameters follow from the type
 ///
-/// 文字列でイベントを送る口をライブラリは持たない。綴りの揺れも、カタログに無いイベントも、
-/// コンパイルできない状態を保つための制約。
+/// The library offers no way to send an event as a string. Misspellings, and events that are not
+/// in the catalog, are held in a state that will not compile.
 ///
-/// ## 載せてよいもの
+/// ## What may be carried
 ///
-/// 列挙値と数値だけ。**品名・表示名・メールアドレス・招待コードのような、人が書いた文字列は
-/// 載せない。** 集計に出す理由が無く、いちど送ると取り消せない。
-/// 生の件数も、粒度によっては個人を指すので ``AnalyticsValue/bucket(_:edges:)`` で帯にする。
+/// Enumerated cases and numbers only. **Never text a person wrote** — item names, display names,
+/// email addresses, invite codes. There is no reason to aggregate them, and once sent they
+/// cannot be taken back. Raw counts point at a single person at fine enough granularity, so put
+/// them in bands with ``AnalyticsValue/bucket(_:edges:)``.
 public protocol AnalyticsEvent: Sendable {
 
-    /// 送信先へ渡す名前。snake_case で、領域のプレフィクスを付ける（`ob_` / `paywall_` など）。
+    /// Name handed to the destination.
+    ///
+    /// snake_case, prefixed with the area it belongs to (`ob_`, `paywall_`, and so on).
     var name: String { get }
 
-    /// この出来事に固有の値。
+    /// Values particular to this occurrence, keyed by the parameter name the destination sees.
+    ///
+    /// The default dedup key ignores them, so two occurrences that differ only in their
+    /// parameters count as the same event.
     var parameters: [String: AnalyticsValue] { get }
 
-    /// どういう類の出来事か。**発火の仕組みはここから選ばれる。**
+    /// Which sort of occurrence this is. **The firing mechanism is chosen from it.**
     var kind: EventKind { get }
 
-    /// どの範囲で 1 回と数えるか。**発火点はこれを書かない。**
+    /// The window over which repeats collapse into one. **Firing points never state this.**
     var dedup: DedupScope { get }
 }
 
 public extension AnalyticsEvent {
 
-    /// 「一生に 1 回」「起動中に 1 回」を覚えておくための鍵。
+    /// Key under which "once ever" and "once per launch" are remembered.
     ///
-    /// 既定では名前だけを使い、パラメータを見ない。たとえば「初めて通知に応えた」は、
-    /// 段階が `low` でも `soon` でも 1 回であって、段階ごとに 1 回ずつではない。
+    /// The default uses the name alone and ignores parameters: "responded to a notification for
+    /// the first time" happens once whether the stage was `low` or `soon`, not once per stage.
     ///
-    /// パラメータの値ごとに 1 回ずつ数えたいときだけ、準拠側で上書きする。
+    /// Override it in the conforming type only when each parameter value deserves its own count.
     var dedupKey: String { name }
 
-    /// ログや検証に出すための 1 行表現。`name key=value key=value` の形。
+    /// One-line rendering for logs and assertions.
     ///
-    /// パラメータの順序は鍵で整列する —— 辞書の並びは実行のたびに変わるので、
-    /// そのまま出すとテストの期待値にできない。
+    /// Takes the form `name key=value key=value`, with parameters sorted by key — dictionary
+    /// order changes between runs, so an unsorted rendering could not serve as an expected value
+    /// in a test.
     var debugLine: String {
         guard !parameters.isEmpty else { return name }
         let rendered = parameters
@@ -53,13 +60,14 @@ public extension AnalyticsEvent {
     }
 }
 
-/// その人に貼り付けておく属性。出来事ではなく「いまどうなっているか」。
+/// An attribute that stays attached to a person: not something that happened, but how things
+/// currently stand.
 ///
-/// 出来事と違い、同じ値を何度置いても結果は変わらない。だから遷移を追う必要が無く、
-/// 状態が分かる場所で置き直せばよい。
+/// Unlike an occurrence, setting the same value again leaves the result unchanged. Nothing has to
+/// track the transition; set it again wherever the state is known.
 public protocol AnalyticsUserProperty: Sendable {
-    /// 送信先へ渡す名前。
+    /// Name handed to the destination.
     var name: String { get }
-    /// 値。列挙の raw 値か、帯に落とした数値だけを入れる。
+    /// Value, restricted to an enumeration's raw value or a number already reduced to a band.
     var value: String { get }
 }

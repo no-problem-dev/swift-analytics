@@ -3,11 +3,12 @@ import Testing
 @testable import AnalyticsCore
 import AnalyticsTesting
 
-/// カタログが持つ数え方が、発火点に書かなくても効いていること。
+/// The counting rules the catalog holds take effect without any firing point writing them down.
 @Suite("数え方の実施")
 struct DedupingAnalyticsTests {
 
-    /// テスト専用の `UserDefaults`。標準スイートを汚すと、他のテストの結果が実行順に依存する。
+    /// A `UserDefaults` suite of its own. Polluting the standard one would make the results of
+    /// other tests depend on the order they run in.
     private func makeDefaults() -> UserDefaults {
         let suite = "swift-analytics.tests.\(UUID().uuidString)"
         return UserDefaults(suiteName: suite)!
@@ -42,7 +43,7 @@ struct DedupingAnalyticsTests {
 
         DedupingAnalytics(recorder, defaults: defaults)
             .track(TestEvent(name: "first_record", dedup: .install))
-        // 別のインスタンス = アプリを起動し直した状況
+        // A separate instance stands in for the app having been launched again
         DedupingAnalytics(recorder, defaults: defaults)
             .track(TestEvent(name: "first_record", dedup: .install))
 
@@ -83,7 +84,7 @@ struct DedupingAnalyticsTests {
     }
 }
 
-// MARK: - テスト用の最小の準拠
+// MARK: - Minimal conformances for the tests
 
 private struct TestEvent: AnalyticsEvent {
     let name: String

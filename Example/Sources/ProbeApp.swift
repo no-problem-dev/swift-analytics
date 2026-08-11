@@ -2,9 +2,10 @@ import AnalyticsCore
 import AnalyticsSwiftUI
 import SwiftUI
 
-/// 計測の繋ぎを実際に動かして確かめるためのアプリ。**危険ごとに 1 画面**（`Example/HAZARDS.md`）。
+/// An app that runs the measurement wiring for real so it can be checked, one screen per hazard.
 ///
-/// 画面の一番上に「いま何が何回出たか」を常に出しておき、XCUITest はその文字列だけを読む。
+/// The hazards are listed in `Example/HAZARDS.md`. What has come out, and how many times, is
+/// always on show at the top of the window, and the XCUITests read only that one string.
 @main
 struct ProbeApp: App {
     @State private var recorder = ProbeRecorder()
@@ -25,15 +26,15 @@ struct ProbeRoot: View {
         VStack(spacing: 0) {
             readout
             TabView(selection: $tab) {
-                // H1/H4/H5: 画面の到達・押し戻り・素早い離脱
+                // H1/H4/H5: reaching a screen, popping back, leaving quickly
                 Tab("画面", systemImage: "1.square", value: 0) {
                     ScreenProbe()
                 }
-                // H3/H6/H8: スクロールの中の要素
+                // H3/H6/H8: an element inside a scrolling container
                 Tab("一覧", systemImage: "2.square", value: 1) {
                     ListProbe()
                 }
-                // H2/H7: シート
+                // H2/H7: sheets
                 Tab("シート", systemImage: "3.square", value: 2) {
                     SheetProbe()
                 }
@@ -41,7 +42,7 @@ struct ProbeRoot: View {
         }
     }
 
-    /// **XCUITest が読む唯一の面。** 絵ではなく数字で確かめる。
+    /// **The only surface the XCUITests read.** Checked as numbers, not as a picture.
     private var readout: some View {
         HStack {
             Text(recorder.readout)
@@ -57,7 +58,7 @@ struct ProbeRoot: View {
     }
 }
 
-// MARK: - H1 / H4 / H5 画面
+// MARK: - H1 / H4 / H5 screens
 
 private struct ScreenProbe: View {
     var body: some View {
@@ -78,7 +79,7 @@ private struct ScreenProbe: View {
     }
 }
 
-// MARK: - H3 / H6 / H8 一覧
+// MARK: - H3 / H6 / H8 lists
 
 private struct ListProbe: View {
     var body: some View {
@@ -87,12 +88,13 @@ private struct ListProbe: View {
                 ForEach(0..<40, id: \.self) { index in
                     row(index)
                 }
-                // **一覧のいちばん下に置く。** 初期表示では確実に画面の外にある。
-                // ここが 1 以上になったら、遅延生成の行にも可視の通知が来ているということで、
-                // 数字に「見ていない露出」が混ざる（H3）。
+                // **Placed at the very bottom of the list.** It is reliably off screen on first
+                // display. If this reaches 1 or more, visibility notifications are arriving for
+                // lazily built rows too, and exposures nobody saw are mixed into the numbers (H3).
                 //
-                // 先頭に置くと初期表示で画面内に入ってしまい、可視通知が来るのが正しくなる
-                // —— 最初はそれで書いて、実装のバグと取り違えかけた。
+                // At the top it would be on screen on first display, where a visibility
+                // notification is the correct behaviour — that is how it was written first, and it
+                // was nearly mistaken for a bug in the implementation.
                 Text("末尾")
                     .frame(maxWidth: .infinity, minHeight: 120)
                     .accessibilityIdentifier("probe.offscreen")
@@ -112,8 +114,8 @@ private struct ListProbe: View {
             .overlay(Text("row \(index)"))
 
         if index == 30 {
-            // 初期表示では確実に画面の外にある行。スクロールして初めて見える。
-            // **文字を持たせて掴めるようにする** —— 図形だけだと XCUITest から引きにくい
+            // A row reliably off screen on first display; only visible once it is scrolled to.
+            // **Give it text so it can be grabbed** — a bare shape is hard to reach from XCUITest
             content
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("probe.row.target")
@@ -124,7 +126,7 @@ private struct ListProbe: View {
     }
 }
 
-// MARK: - H2 / H7 シート
+// MARK: - H2 / H7 sheets
 
 private struct SheetProbe: View {
     @State private var isPresented = false
@@ -142,8 +144,8 @@ private struct SheetProbe: View {
                     .accessibilityIdentifier("probe.sheet.dismiss")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // コンテナに identifier を付けると子要素が集約されて、中のボタンが
-            // XCUITest から見えなくなる。**計測は付けるが、名前は付けない。**
+            // An identifier on the container merges its children, which hides the button inside
+            // from XCUITest. **Measure it, but do not name it.**
             .trackScreen(ProbeEvent.sheet, dwell: ProbeConfig.dwell)
         }
     }

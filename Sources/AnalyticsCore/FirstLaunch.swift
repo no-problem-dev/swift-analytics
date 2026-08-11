@@ -1,26 +1,33 @@
 import Foundation
 
-/// 初回起動の時刻を 1 度だけ刻み、そこからの経過を数える。
+/// Stamps the time of the first launch once, and measures how long has passed since.
 ///
-/// 「その端末で初めて起きたこと」が**何日目に起きたか**は、初回体験の読み方を変える ——
-/// その場でやったのか、後日思い出してやったのかで、直すべき場所が違う。
+/// **Which day** something that happened for the first time on this device happened on changes
+/// how to read the first-run experience — doing it there and then, and remembering to come back
+/// days later, call for fixing different things.
 ///
-/// 状態は `UserDefaults`。消えても最悪もう一度刻むだけで、アプリの動作には影響しない。
+/// The state lives in `UserDefaults`. Losing it costs one fresh stamp and affects nothing the app
+/// does.
 public enum FirstLaunch {
 
     private static let key = "analytics.firstLaunchAt"
 
-    /// 初回起動の時刻を 1 度だけ記録する。**アプリの起動経路で毎回呼んでよい**（2 回目以降は何もしない）。
+    /// Stamps the time of the first launch, unless one is already stored.
+    ///
+    /// **Safe to call on every launch** — after the first, it does nothing at all.
     ///
     /// - Parameters:
-    ///   - defaults: 置き場所
-    ///   - now: 現在時刻。テストから固定できるようにしてある
+    ///   - defaults: Where the stamp is kept
+    ///   - now: The current time, left injectable so tests can hold it still
     public static func markIfNeeded(defaults: UserDefaults = .standard, now: Date = Date()) {
         guard defaults.object(forKey: key) == nil else { return }
         defaults.set(now.timeIntervalSince1970, forKey: key)
     }
 
-    /// 初回起動からの日数。記録が無ければ `0`（初日として扱う）。
+    /// Whole days elapsed since the first launch, counting the first 24 hours as day 0.
+    ///
+    /// With nothing stamped it answers 0, treating an unknown device as being on its first day,
+    /// and it never goes below 0 even if the clock moves backwards.
     public static func daysSince(defaults: UserDefaults = .standard, now: Date = Date()) -> Int {
         let stored = defaults.double(forKey: key)
         guard stored > 0 else { return 0 }
@@ -28,7 +35,7 @@ public enum FirstLaunch {
         return max(0, Int(elapsed / 86_400))
     }
 
-    /// 記録を消す（テストと開発メニュー用）。
+    /// Clears the stamp, so the next launch is treated as the first, for tests and developer menus.
     public static func reset(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: key)
     }

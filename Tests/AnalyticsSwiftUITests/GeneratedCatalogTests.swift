@@ -4,10 +4,11 @@ import AnalyticsTesting
 import Testing
 @testable import AnalyticsSwiftUI
 
-/// `Scripts/analytics-gen.py` が書き出したものが、実際に使える形になっていること。
+/// What `Scripts/analytics-gen.py` writes out comes back in a shape that is actually usable.
 ///
-/// このテストの存在自体が契約になっている —— `Generated/ExampleAnalytics.swift` は
-/// `Schema/example.yaml` から生成しており、**生成物がコンパイルできなくなればここで落ちる**。
+/// The existence of this test is itself the contract — `Generated/ExampleAnalytics.swift` is
+/// generated from `Schema/example.yaml`, and **the moment the generated code stops compiling,
+/// this is where it fails**.
 @Suite("生成したカタログ")
 struct GeneratedCatalogTests {
 
@@ -34,7 +35,8 @@ struct GeneratedCatalogTests {
 
     @Test("bucket 型の属性は帯に落ちる")
     func bucketsProperties() {
-        // 生の件数を送らないための型。**帯にするかどうかを撃つ側が選べない**のが要点。
+        // A type that keeps raw counts from being sent. The point is that **the caller cannot
+        // choose whether to band it.**
         #expect(ExampleUserProperty.itemsBucket(0).value == "0")
         #expect(ExampleUserProperty.itemsBucket(3).value == "1_5")
         #expect(ExampleUserProperty.itemsBucket(40).value == "16_plus")
@@ -44,8 +46,8 @@ struct GeneratedCatalogTests {
     @Test("型付きの入口があるので、発火点で先頭ドットが使える")
     func keepsLeadingDotSyntax() {
         let analytics = RecordingAnalytics()
-        // ポートは `any AnalyticsEvent` を受け取るので、生成された overload が無いと
-        // この行はコンパイルできない。**書き味が保たれていることをここで固定する。**
+        // The port takes `any AnalyticsEvent`, so without the generated overload this line does
+        // not compile. **Pin here that it still reads the way it should.**
         analytics.track(.tutorialBegin)
         analytics.track(.paywallShown(source: .teaser))
         analytics.setUserProperty(.plan(.free))
@@ -64,7 +66,7 @@ struct GeneratedCatalogTests {
         analytics.track(ExampleEvent.stockFirstRecord(day: 0))
         analytics.track(ExampleEvent.stockFirstRecord(day: 4))
 
-        // 発火点に「もう撃ったか」を書いていないのに 1 回になる
+        // Comes out once, with no firing point asking whether it already fired
         #expect(recorder.count(of: "stock_first_record") == 1)
     }
 }

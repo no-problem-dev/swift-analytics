@@ -1,10 +1,11 @@
 import Foundation
 import os
 
-/// 送るはずの出来事を `os.Logger` に流すだけの実装。
+/// A client that writes each occurrence to the unified log instead of sending it anywhere.
 ///
-/// 送信先のデバッグ画面は反映に間があるので、「いまこの操作で何が出たか」を追うのに使う。
-/// 本番送信の代わりではなく、``MultiplexAnalytics`` で並べて両方走らせる。
+/// A destination's own debug view lags behind, so this is what to use to follow what a particular
+/// interaction just produced. It does not replace the real send — run both, side by side, with
+/// ``MultiplexAnalytics``.
 ///
 /// ```swift
 /// #if DEBUG
@@ -14,15 +15,16 @@ import os
 /// #endif
 /// ```
 ///
-/// 値は `privacy: .public` で出す。載っているのは列挙値と数値だけ（``AnalyticsValue``）で、
-/// 人が書いた文字列は最初から入らないため。
+/// Everything is logged at the info level with `privacy: .public`. What it carries is limited to
+/// enumerated cases and numbers (``AnalyticsValue``), so text a person wrote cannot get in.
 public struct ConsoleAnalytics: AnalyticsClient {
 
     private let logger: Logger
 
     /// - Parameters:
-    ///   - subsystem: 既定は `dev.no-problem.swift-analytics`。アプリ側の識別子を渡してよい
-    ///   - category: 既定は `analytics`
+    ///   - subsystem: Logger subsystem these lines are filed under; pass the app's own identifier
+    ///     to have them show up with the rest of its logging
+    ///   - category: Logger category, used to narrow a Console filter to measurement alone
     public init(
         subsystem: String = "dev.no-problem.swift-analytics",
         category: String = "analytics"

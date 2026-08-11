@@ -4,19 +4,19 @@ import AnalyticsTesting
 import Testing
 @testable import AnalyticsSwiftUI
 
-/// 画面の出来事を数え方に繋いでいる部分を固定する。
+/// Pins the part that wires a view's events onto the counting rule.
 ///
-/// **事故が起きるのは定義ではなく繋ぎのほう。** `ImpressionTracker` の側は
-/// 「50% を 1 秒」を正しく判定するが、`onAppear` を 2 箇所に書いた・`onDisappear` で
-/// 待ちを止め忘れた・背面でも走り続けた、はどれもそこでは落ちない。
+/// **Accidents happen in the wiring, not in the definition.** `ImpressionTracker` judges "50% for
+/// one second" correctly, but `onAppear` written in two places, a wait left running by
+/// `onDisappear`, and a timer that kept going in the background all get past it.
 ///
-/// 待ちは注入してあるので、**実時間もシミュレータも要らない**。
+/// The waiting is injected, so **no real time and no simulator are needed**.
 @MainActor
 @Suite("画面の出来事を数えに繋ぐ")
 struct ImpressionSessionTests {
 
-    /// 待たない `sleep`。時間の経過そのものはここでは関心ではない
-    /// （「何秒か」は ImpressionTracker のテストが持っている）。
+    /// A `sleep` that does not wait. Time passing is not the concern here — how many seconds it
+    /// takes belongs to the ImpressionTracker tests.
     private let noWait: @Sendable (TimeInterval) async -> Void = { _ in }
 
     private func make(_ recorder: RecordingAnalytics, dwell: TimeInterval = 1) -> ImpressionSession {
@@ -41,8 +41,8 @@ struct ImpressionSessionTests {
 
     @Test("同じ露出で onAppear が二度来ても増えない")
     func doesNotDoubleFireOnReentry() async {
-        // SwiftUI は View を作り直すことがあり、そのとき onAppear が再入する。
-        // **これが「1 インストールで 2 回出ていた」事故の形。**
+        // SwiftUI sometimes rebuilds a view, and onAppear comes again when it does.
+        // **This is the shape of the "twice per install" accident.**
         let recorder = RecordingAnalytics()
         let session = make(recorder)
 
@@ -60,7 +60,7 @@ struct ImpressionSessionTests {
         let session = make(recorder)
 
         session.appeared()
-        session.disappeared()      // 待ちの途中で閉じた
+        session.disappeared()      // closed partway through the wait
         await session.settled()
 
         #expect(recorder.names.isEmpty)
@@ -86,7 +86,7 @@ struct ImpressionSessionTests {
         let session = make(recorder)
 
         session.appeared()
-        session.sceneChanged(isActive: false)   // 通知を開いた・アプリを切り替えた
+        session.sceneChanged(isActive: false)   // opened a notification, or switched apps
         await session.settled()
 
         #expect(recorder.names.isEmpty)
@@ -112,7 +112,7 @@ struct ImpressionSessionTests {
         let session = make(recorder)
 
         session.visibilityChanged(isVisible: true)
-        session.visibilityChanged(isVisible: false)   // 滞在しきる前に通り過ぎた
+        session.visibilityChanged(isVisible: false)   // scrolled past before the dwell elapsed
         await session.settled()
 
         #expect(recorder.names.isEmpty)
@@ -131,7 +131,8 @@ struct ImpressionSessionTests {
 
     @Test("同じ露出の中で見え隠れしても増えない")
     func doesNotFireAgainWithinTheSameEpisode() async {
-        // 一覧を上下に振ると可視・不可視が何度も来る。**そのたびに数えたら意味が変わる。**
+        // Rocking a list up and down brings visible and hidden round again and again.
+        // **Counting each time would change what the number means.**
         let recorder = RecordingAnalytics()
         let session = make(recorder)
 

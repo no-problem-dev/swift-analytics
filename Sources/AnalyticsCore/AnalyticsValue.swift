@@ -1,26 +1,36 @@
-/// パラメータに載せられる値。
+/// A value that may be carried on an event parameter.
 ///
-/// `Any` を許さないのは、送信先ごとに扱える型が違い、**扱えない型は黙って捨てられる**から。
-/// たとえば GA4 は配列も辞書も受け取らず、送信は成功したように見えてダッシュボードに出ない。
-/// ここで型を絞っておけば、送る前にコンパイラが止める。
+/// `Any` is not allowed, because destinations differ in what they accept and **quietly drop what
+/// they cannot handle**. GA4, for instance, takes neither arrays nor dictionaries: the send looks
+/// successful and the value never reaches the dashboard. Narrowing the type here makes the
+/// compiler stop it first.
+///
+/// Only `String`, `Int`, `Double`, and `Bool` are representable, through the four cases below.
+/// Anything else — a date, an array, a model object — has no case to go into and has to be
+/// reduced at the call site, most often to a raw value or to a band.
 public enum AnalyticsValue: Sendable, Equatable {
 
-    /// 列挙の raw 値。**人が書いた文字列を入れない**（品名・表示名・自由入力）。
+    /// An enumeration's raw value. **Never text a person wrote** (item name, display name, free
+    /// input).
     case text(String)
 
-    /// 個数・日数などの整数。
+    /// A whole number, such as a number of items or a number of days.
     case count(Int)
 
-    /// 割合・秒などの実数。
+    /// A fractional number, such as a ratio or a duration in seconds.
     case number(Double)
 
-    /// 真偽。送信先によっては数値に落とす（``ga4Encoded``）。
+    /// A boolean, rendered as the words `true` and `false`.
+    ///
+    /// Destinations that want it as a number get it that way from their own adapter; nothing in
+    /// this package converts it.
     case flag(Bool)
 
-    /// 数値を帯に落とす。
+    /// Reduces a number to a labelled band.
     ///
-    /// 生の件数は、粒度によっては個人を指す（「アイテム 137 件の人」は 1 人しか居ない）。
-    /// 集計に必要なのはたいてい大小の別なので、境界を決めて帯にする。
+    /// A raw count points at a single person at fine enough granularity (there is only one person
+    /// "with 137 items"). Aggregation usually needs the magnitude rather than the number, so pick
+    /// boundaries and report the band.
     ///
     /// ```swift
     /// AnalyticsValue.bucket(0, edges: [1, 6, 16])   // "0"
@@ -28,9 +38,14 @@ public enum AnalyticsValue: Sendable, Equatable {
     /// AnalyticsValue.bucket(99, edges: [1, 6, 16])  // "16_plus"
     /// ```
     ///
+    /// Anything below the lowest edge is labelled with that edge minus one, whatever the value
+    /// actually is, so the label of a band never carries the number it was meant to hide. Passing
+    /// no edges at all puts every value in a band labelled `"0"`.
+    ///
     /// - Parameters:
-    ///   - value: 元の数値
-    ///   - edges: 帯の下限。**昇順**で渡す
+    ///   - value: The number to reduce
+    ///   - edges: Lower bounds of the bands. Sorted internally, so the order they arrive in does
+    ///     not change the result
     public static func bucket(_ value: Int, edges: [Int]) -> AnalyticsValue {
         let sorted = edges.sorted()
         guard let first = sorted.first, value >= first else {

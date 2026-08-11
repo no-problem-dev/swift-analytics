@@ -1,58 +1,67 @@
-/// その出来事がどういう類のものか。
+/// Which sort of thing an occurrence is.
 ///
-/// 「タップログ」「ビューログ」と呼ばれてきた区別を、そのまま語彙にしたもの。
-/// 種別が決まると数え方の既定が決まり、発火点は「どこで」だけを書けばよくなる。
+/// The distinction long carried informally as "tap logs" and "view logs", turned into vocabulary.
+/// Fixing the sort fixes the default counting rule, which leaves the firing point with nothing to
+/// state but where.
 ///
-/// ## 事実がここに無いのは意図的
+/// ## Facts are absent on purpose
 ///
-/// 「買った」「世帯ができた」「通知を送った」のような**ドメインの事実は、
-/// クライアントから送らない**。事実はサーバーに永続化されていて、それが正典なので、
-/// 同じことをイベントでも送ると必ず食い違い、しかもどちらが正しいかを判定する手段が無くなる
-/// （オフラインで記録して後から同期された分は、送信時刻と発生時刻がずれる）。
+/// **Domain facts are not sent from the client** — bought, household created, notification sent.
+/// The fact is already persisted on the server and that is the authoritative copy, so sending the
+/// same thing as an event guarantees a discrepancy, with no way left to decide which side is
+/// right (anything recorded offline and synced later has a send time that differs from the time
+/// it happened).
 ///
-/// 数えるときはサーバーのデータを SQL で引く。この規律のおかげで、
-/// **ユースケース層に計測を挿す必要が消える** —— 計測がアーキテクチャに寄生しない。
+/// Count those with SQL over the server's data. That discipline is what **removes any need to
+/// thread measurement through the use-case layer** — measurement never takes up residence in the
+/// architecture.
 public enum EventKind: String, Sendable, CaseIterable {
 
-    /// 画面に着いた。
+    /// Arrived at a screen.
     case screen
 
-    /// 一覧の中の要素が実際に見えた。**スクロールできる器の中でだけ意味を持つ。**
+    /// An element in a list actually became visible. **Only meaningful inside a scrollable
+    /// container.**
     case impression
 
-    /// 押した・選んだ・入力した。
+    /// Pressed, chose, or typed.
     case interaction
 
-    /// 完了した・失敗した・諦めた。
+    /// Finished, failed, or gave up.
     case outcome
 }
 
-/// 同じ出来事を、どの範囲で 1 回と数えるか。
+/// The window over which repeats of one occurrence collapse into a single count.
 ///
-/// ## なぜ語彙に入れるのか
+/// ## Why it belongs in the vocabulary
 ///
-/// 数え方がどこにも書かれていないと、**発火点を 2 箇所に書いたことを誰も間違いだと言えない**。
-/// 実際、あるアプリでは初回体験の開始イベントが同意画面と本編の両方から撃たれ、
-/// 1 インストールにつき 2 回出ていた。完了率が実際の半分に見えていたが、
-/// 型もテストもダッシュボードも、それを異常だと言えなかった。
+/// When the counting rule is written down nowhere, **nobody can call a second firing point a
+/// mistake**. In one app the onboarding-start event was fired from both the consent screen and
+/// the flow itself, and came out twice per install. The completion rate looked like half of what
+/// it was, and neither the types, nor the tests, nor the dashboard could say anything was wrong.
 ///
-/// 「1 インストールに 1 回」がカタログにあれば、2 箇所目は検査で落ちる。
+/// With "once per install" in the catalog, the second firing point fails the check.
 public enum DedupScope: String, Sendable, CaseIterable {
 
-    /// 露出の一区切りごとに 1 回。画面から外れて戻ってきたら、また数える。
+    /// Once per exposure. Leaving the screen and coming back counts again.
     ///
-    /// 実施するのは ``ImpressionTracker``（露出の一区切りは画面の概念なので、送信側では追えない）。
+    /// Enforced by ``ImpressionTracker``, since where an exposure ends is a view-level notion the
+    /// sending side cannot follow. ``DedupingAnalytics`` passes these straight through.
     case episode
 
-    /// アプリを起動している間に 1 回。
+    /// Once while the app is running.
+    ///
+    /// The window is the lifetime of the ``DedupingAnalytics`` instance, so relaunching the app
+    /// counts again.
     case session
 
-    /// その端末で一生に 1 回。
+    /// Once ever on this device.
     ///
-    /// 初回体験が効いたかどうかは初回にしか語れない —— 2 回目の「買った」は、
-    /// 初回体験の成否について何も言っていない。
+    /// Whether the first-run experience worked can only be told from the first run — a second
+    /// "bought" says nothing about it. The flag lives in `UserDefaults`, so it survives relaunches
+    /// and clears only when the app is deleted or that store is wiped.
     case install
 
-    /// 毎回。操作は、起きた回数そのものに意味がある。
+    /// Every time. For an interaction, the number of times it happened is the point.
     case always
 }

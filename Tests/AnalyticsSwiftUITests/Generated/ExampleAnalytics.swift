@@ -1,33 +1,33 @@
-// このファイルは analytics-gen.py が書き出しています。手で編集しないでください。
+// This file is written out by analytics-gen.py. Do not edit it by hand.
 //
-// 正典は analytics.yaml。**先にそちらを直してから生成する。**
+// analytics.yaml is the authoritative copy. **Change that first, then generate.**
 
 import AnalyticsCore
 import AnalyticsSwiftUI
 import SwiftUI
 
-/// このアプリが送れる出来事の全部。
+/// Everything this app is able to send.
 ///
-/// 増やすときは analytics.yaml を直してから生成し直す。
+/// To add one, change analytics.yaml and generate again.
 public enum ExampleEvent: AnalyticsEvent {
 
-    /// 初回体験の 1 枚目に着いた
+    /// Arrived at the first page of the first-run experience
     ///
-    /// 撃つ場所: OnboardingFlowView（同意画面からは撃たない）
+    /// Fired from: OnboardingFlowView (never from the consent screen)
     case tutorialBegin
 
-    /// 初回体験を終えてホームに着いた
+    /// Finished the first-run experience and arrived at the home screen
     case tutorialComplete(items: Int)
 
-    /// 課金の案内が実際に見えた
+    /// The subscription offer actually became visible
     ///
-    /// 撃つ場所: PaywallView が 50% 以上 1 秒
+    /// Fired from: PaywallView, at 50% or more for one second
     case paywallShown(source: Source)
 
-    /// その端末で最初の記録
+    /// The first record made on this device
     case stockFirstRecord(day: Int)
 
-    /// `paywall_shown.source` の値。どの露出点から開いたか
+    /// Values of `paywall_shown.source`: which exposure point it was opened from
     public enum Source: String, Sendable, CaseIterable {
         case teaser
         case soloCard = "solo_card"
@@ -72,16 +72,17 @@ public enum ExampleEvent: AnalyticsEvent {
     }
 }
 
-/// このアプリが置ける属性の全部。
+/// Every attribute this app is able to set.
 public enum ExampleUserProperty: AnalyticsUserProperty {
 
-    /// 課金の状態
+    /// Subscription state
     case plan(Plan)
 
-    /// 登録件数の帯（生の件数は個人を指しうるので帯にする）
+    /// Band for the number of records held (raw counts can point at one person, so they are
+    /// banded)
     case itemsBucket(Int)
 
-    /// `plan` の値。
+    /// Values of `plan`.
     public enum Plan: String, Sendable, CaseIterable {
         case free
         case paid
@@ -102,9 +103,10 @@ public enum ExampleUserProperty: AnalyticsUserProperty {
     }
 }
 
-// MARK: - 型付きの入口
+// MARK: - Typed entry points
 //
-// ポートは `any AnalyticsEvent` を受け取るので、これが無いと発火点で先頭ドットが使えない。
+// The port takes `any AnalyticsEvent`, so without these a firing point cannot use leading-dot
+// syntax.
 
 public extension AnalyticsClient {
 

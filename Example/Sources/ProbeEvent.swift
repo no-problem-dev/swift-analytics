@@ -1,17 +1,17 @@
 import AnalyticsCore
 
-/// 確かめたい発火だけを持つ最小のカタログ。
+/// The smallest catalog that still covers the firings worth checking.
 ///
-/// 本物のアプリのカタログは `analytics.yaml` から生成するが、ここで確かめたいのは
-/// **カタログの中身ではなく繋ぎのほう**なので、手で書いた 4 つで足りる。
+/// A real app's catalog is generated from `analytics.yaml`, but what is being checked here is
+/// **the wiring rather than what is in the catalog**, so four hand-written cases are enough.
 enum ProbeEvent: String, AnalyticsEvent, CaseIterable {
-    /// 画面（`trackScreen`）。
+    /// A screen, measured with `trackScreen`.
     case screen = "screen"
-    /// シートの中の画面。
+    /// A screen inside a sheet.
     case sheet = "sheet"
-    /// スクロールの中の要素（`trackImpression`）。
+    /// An element inside a scrolling container, measured with `trackImpression`.
     case row = "row"
-    /// 画面外に置いた要素。**ここが 1 以上になったら H3 を踏んでいる。**
+    /// An element placed off screen. **If this reaches 1 or more, hazard H3 has been hit.**
     case offscreen = "offscreen"
 
     var name: String { rawValue }

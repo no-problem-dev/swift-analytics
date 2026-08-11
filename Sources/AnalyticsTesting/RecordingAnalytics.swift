@@ -1,57 +1,64 @@
 import AnalyticsCore
 import Foundation
 
-/// 撃たれた計測を覚えるだけの送信口。
+/// A test double that only remembers what it was asked to send.
 ///
-/// 「この操作でこの出来事が、**この順で、この回数**出る」をテストに固定するために使う。
-/// 回数まで見るのが要点 —— 計測の事故はたいてい「出ない」ではなく「出すぎる」で、
-/// 出すぎは名前を数えるだけの検査では見えない。
+/// Use it to pin "this interaction produces these occurrences, **in this order, this many
+/// times**" in a test. Looking at the count is the point — measurement accidents are usually one
+/// too many rather than none, and one too many is invisible to a check that only looks at which
+/// names appeared.
+///
+/// Safe to call from any thread: a lock serialises every read and write, so a client called from
+/// a background task records correctly. It is not an actor and never hops to the main actor, so a
+/// read taken immediately after an asynchronous send may not include that send yet.
 ///
 /// ```swift
 /// let analytics = RecordingAnalytics()
-/// // ... 操作 ...
+/// // ... interact ...
 /// #expect(analytics.names == ["tutorial_begin", "tutorial_complete"])
 /// ```
 public final class RecordingAnalytics: AnalyticsClient, @unchecked Sendable {
 
-    /// 記録を守る。`Sendable` を手で請け負っているのはこの 2 つの可変状態のためで、
-    /// 触る経路はこのファイルの中しかない。
+    /// Guards the records. These two pieces of mutable state are why `Sendable` is vouched for by
+    /// hand here, and nothing outside this file reaches them.
     private let lock = NSLock()
     private var storedEvents: [any AnalyticsEvent] = []
     private var storedProperties: [any AnalyticsUserProperty] = []
 
     public init() {}
 
-    /// 撃たれた出来事（撃たれた順）。
+    /// Everything that was sent, in the order it was sent.
     public var events: [any AnalyticsEvent] {
         lock.lock()
         defer { lock.unlock() }
         return storedEvents
     }
 
-    /// 撃たれた出来事の名前（撃たれた順）。**重複はそのまま残す。**
+    /// The names of what was sent, in order. **Repeats are left in.**
     public var names: [String] {
         events.map(\.name)
     }
 
-    /// `name key=value` の形で並べたもの。パラメータまで固定したいときに使う。
+    /// One line per occurrence, for pinning the parameter values as well as the names.
+    ///
+    /// Each line takes the form `name key=value`, with parameters sorted by key.
     public var lines: [String] {
         events.map(\.debugLine)
     }
 
-    /// 置かれた属性（置かれた順）。
+    /// Every property that was set, in the order it was set, repeats included.
     public var properties: [any AnalyticsUserProperty] {
         lock.lock()
         defer { lock.unlock() }
         return storedProperties
     }
 
-    /// `name=value` の形で並べたもの。
+    /// One line per property, in the form `name=value`.
     public var propertyLines: [String] {
         properties.map { "\($0.name)=\($0.value)" }
     }
 
-    /// ある名前が何回撃たれたか。**1 回であることを確かめるのに使う。**
+    /// How many times something with this name was sent. **Use it to pin exactly once.**
     public func count(of name: String) -> Int {
         names.filter { $0 == name }.count
     }
@@ -68,7 +75,7 @@ public final class RecordingAnalytics: AnalyticsClient, @unchecked Sendable {
         storedProperties.append(property)
     }
 
-    /// 記録を捨てる。1 つのテストで局面を分けたいときに使う。
+    /// Throws away both records, for separating one phase from the next within a single test.
     public func reset() {
         lock.lock()
         defer { lock.unlock() }

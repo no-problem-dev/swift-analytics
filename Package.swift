@@ -1,12 +1,12 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-/// プロダクト分析のための語彙と、SwiftUI で正しく数えるための道具。
+/// Vocabulary for product analytics, and the tools to count it correctly in SwiftUI.
 ///
-/// **外部依存ゼロ。** vendor（Firebase / PostHog など）はここに入れない ——
-/// SwiftPM は依存をパッケージ単位で解決するので、同居させると語彙しか使わない消費者にも
-/// vendor の SDK が降ってくる。アダプタは `swift-analytics-firebase` のような別パッケージか、
-/// アプリ側の 20 行に置く。
+/// **No external dependencies.** Vendor SDKs (Firebase, PostHog, and the like) do not belong here:
+/// SwiftPM resolves dependencies per package, so bundling one would pull it into consumers that
+/// only use the vocabulary. Adapters live in a separate package such as `swift-analytics-firebase`,
+/// or in twenty lines inside the app.
 let package = Package(
     name: "swift-analytics",
     platforms: [
@@ -17,11 +17,11 @@ let package = Package(
         .visionOS(.v1)
     ],
     products: [
-        // 語彙・ポート・数え方。SwiftUI にも Foundation の外にも依存しない中核。
+        // Vocabulary, ports, counting rules. Depends on nothing beyond Foundation, not even SwiftUI.
         .library(name: "AnalyticsCore", targets: ["AnalyticsCore"]),
-        // 画面から撃つための層。SwiftUI にだけ依存する。
+        // The layer that fires from a view tree. Depends only on SwiftUI.
         .library(name: "AnalyticsSwiftUI", targets: ["AnalyticsSwiftUI"]),
-        // テストの土台。**製品ターゲットからは import しない。**
+        // Test doubles. **Never import this from a shipping target.**
         .library(name: "AnalyticsTesting", targets: ["AnalyticsTesting"])
     ],
     dependencies: [

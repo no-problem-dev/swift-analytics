@@ -1,17 +1,20 @@
 import AnalyticsCore
 import Foundation
 
-/// 画面の出来事（現れた・消えた・前面に戻った・スクロールで見えた）を
-/// ``AnalyticsCore/ImpressionTracker`` に流し、待ってから送るところまでを持つ。
+/// Turns a view's appearing, disappearing, returning to the foreground, and scrolling into view
+/// into at most one send per exposure.
 ///
-/// ## なぜ ViewModifier から切り出すのか
+/// It feeds ``AnalyticsCore/ImpressionTracker``, owns the waiting, and sends once the wait comes
+/// through intact.
 ///
-/// `ImpressionTracker` は数え方そのものを定義していて、テストで固定してある。
-/// **けれど事故が起きるのはたいてい定義ではなく「繋ぎ」のほう** ——
-/// `onAppear` を 2 箇所に書いた、`onDisappear` で待ちを止め忘れた、背面に落ちても走り続けた。
-/// ViewModifier の中に閉じ込めると、それらは画面を描かないと確かめられなくなる。
+/// ## Why it is lifted out of the ViewModifier
 ///
-/// ここに出しておけば、**シミュレータも実時間の待ちもなしに**次のことが固定できる。
+/// `ImpressionTracker` defines the counting itself, and tests pin it. **But accidents happen in
+/// the wiring rather than in the definition** — `onAppear` written in two places, a wait left
+/// running by an `onDisappear`, a timer that kept going into the background. Shut inside a
+/// ViewModifier, none of those can be checked without drawing a screen.
+///
+/// Out here, these can be pinned **with no simulator and no waiting in real time**.
 ///
 /// ```swift
 /// let session = ImpressionSession(event: event, client: recorder, sleep: { _ in })
@@ -19,12 +22,13 @@ import Foundation
 /// await session.settled()
 /// #expect(recorder.count(of: "paywall_shown") == 1)
 ///
-/// session.appeared()           // 同じ露出で二度目の onAppear（SwiftUI の再入）
+/// session.appeared()           // a second onAppear in the same exposure (SwiftUI re-entry)
 /// await session.settled()
-/// #expect(recorder.count(of: "paywall_shown") == 1)   // 増えない
+/// #expect(recorder.count(of: "paywall_shown") == 1)   // unchanged
 /// ```
 ///
-/// 待ちは注入できる。既定は `Task.sleep`、テストでは「待たない」関数を渡す。
+/// The waiting is injectable: `Task.sleep` by default, and in tests a function that does not
+/// wait at all.
 @MainActor
 public final class ImpressionSession {
 
@@ -36,10 +40,10 @@ public final class ImpressionSession {
     private var pending: Task<Void, Never>?
 
     /// - Parameters:
-    ///   - event: 撃つ出来事
-    ///   - client: 送信口
-    ///   - tracker: 数え方。しきい値と滞在時間を変えたいときに差し替える
-    ///   - sleep: 待ち方。テストでは待たない関数を渡す
+    ///   - event: The occurrence to fire
+    ///   - client: Where it is sent
+    ///   - tracker: The counting rule; swap it to change the threshold or the dwell
+    ///   - sleep: How to wait; tests pass a function that returns straight away
     public init(
         event: any AnalyticsEvent,
         client: any AnalyticsClient,
@@ -54,33 +58,47 @@ public final class ImpressionSession {
         self.sleep = sleep
     }
 
-    /// 画面（または要素）が現れた。**同じ露出の中で何度呼ばれても 1 回しか数えない。**
+    /// Reports that the screen, or the element, appeared, and starts the wait.
+    ///
+    /// **However many times it is called within one exposure, it counts once.** A repeated
+    /// `onAppear` after the send has happened does nothing at all.
     public func appeared() {
         advance(tracker.visibility(1))
     }
 
-    /// 画面から外れた。待ちを止め、次に現れたらまた数える。
+    /// Reports that it left the screen: drops any wait in flight and ends the exposure.
+    ///
+    /// Whatever appears next counts again.
     public func disappeared() {
         cancel()
         tracker.endEpisode()
     }
 
-    /// スクロールの中で見え方が変わった。
+    /// Reports that visibility changed inside a scrolling container.
+    ///
+    /// Becoming visible starts the wait; becoming hidden drops it, so an element scrolled past
+    /// before the dwell elapses is never counted.
     public func visibilityChanged(isVisible: Bool) {
         advance(tracker.visibility(isVisible ? 1 : 0))
     }
 
-    /// 前面／背面が変わった。
+    /// Reports a move between foreground and background.
+    ///
+    /// Going to the background drops the wait; coming back starts it again from the beginning,
+    /// unless this exposure has already been counted.
     public func sceneChanged(isActive: Bool) {
         advance(tracker.foreground(isActive))
     }
 
-    /// 待っている処理が終わるまで待つ（テスト用）。
+    /// Waits for the work in flight to finish, for tests.
+    ///
+    /// Returns straight away when nothing is in flight, including right after the wait was
+    /// dropped.
     public func settled() async {
         await pending?.value
     }
 
-    /// この露出で既に数えたか。
+    /// Whether this exposure has already been counted.
     public var hasFired: Bool { tracker.hasFired }
 
     private func advance(_ action: ImpressionTracker.Action) {
@@ -94,8 +112,8 @@ public final class ImpressionSession {
             pending = Task { [weak self, sleep] in
                 await sleep(seconds)
                 guard !Task.isCancelled, let self else { return }
-                // **満了しても、条件が崩れていれば数えない。**
-                // 取り消し漏れを数え違いに変えないための最後の関所。
+                // **Running out of time is not enough if the conditions have lapsed.**
+                // The last gate keeping a missed cancellation from becoming a wrong count.
                 guard self.tracker.dwellCompleted() else { return }
                 self.client.track(self.event)
             }

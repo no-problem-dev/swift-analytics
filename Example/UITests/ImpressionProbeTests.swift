@@ -1,20 +1,21 @@
 import XCTest
 
-/// SwiftUI が本当に信号を送るかを、実際に動かして確かめる。
+/// Checks, by running it for real, whether SwiftUI actually sends the signals.
 ///
-/// ここに書くのは **`ImpressionSession` のテストでは書けないものだけ**（`Example/HAZARDS.md`）。
-/// 数え方そのものはユニットで固定してあるので、ここで重ねて確かめない。
+/// Only what **cannot be written as an `ImpressionSession` test** goes here (see
+/// `Example/HAZARDS.md`). The counting itself is pinned by the unit tests, so it is not checked
+/// again here.
 ///
-/// 読むのは画面上の 1 本の文字列（`probe.readout` = `screen=1 sheet=0 row=0 offscreen=0`）。
-/// **絵ではなく数字を見る** ——「1 回のはずが 2 回」も「戻ったのに数え直していない」も、
-/// スクリーンショットでは同じに見える。
+/// What is read is one string on screen (`probe.readout` = `screen=1 sheet=0 row=0 offscreen=0`).
+/// **Numbers, not pictures** — "twice where once was meant" and "came back but never counted
+/// again" look the same in a screenshot.
 final class ImpressionProbeTests: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
     }
 
-    // MARK: 道具
+    // MARK: Tools
 
     private func launch(dwell: Double = 1.0) -> XCUIApplication {
         let app = XCUIApplication()
@@ -23,7 +24,7 @@ final class ImpressionProbeTests: XCTestCase {
         return app
     }
 
-    /// 数字が期待どおりになるまで待つ。**滞在時間ぶんの猶予を必ず取る。**
+    /// Waits until the number reaches what is expected. **Always leaves room for the dwell.**
     private func expect(
         _ app: XCUIApplication,
         _ name: String,
@@ -43,7 +44,8 @@ final class ImpressionProbeTests: XCTestCase {
         )
     }
 
-    /// 数字が変わらないことを確かめる。**待たずに断じない** —— 遅れて出てくる発火を見逃す。
+    /// Checks that the number does not change. **Never concludes without waiting** — a firing that
+    /// arrives late would be missed.
     private func expectStays(
         _ app: XCUIApplication,
         _ name: String,
@@ -61,13 +63,13 @@ final class ImpressionProbeTests: XCTestCase {
         )
     }
 
-    // MARK: H4 押し戻ってから入り直す
+    // MARK: H4 popping back and going in again
 
     func test_画面に入ると1回だけ数える() {
         let app = launch()
         app.buttons["probe.screen.push"].tap()
         expect(app, "screen", 1)
-        // 留まっていても増えない
+        // Staying on it does not raise the number
         expectStays(app, "screen", 1)
     }
 
@@ -75,37 +77,37 @@ final class ImpressionProbeTests: XCTestCase {
         let app = launch()
         app.buttons["probe.screen.push"].tap()
         expect(app, "screen", 1)
-        app.navigationBars.buttons.element(boundBy: 0).tap()   // 戻る
+        app.navigationBars.buttons.element(boundBy: 0).tap()   // back
         app.buttons["probe.screen.push"].tap()
         expect(app, "screen", 2)
     }
 
-    // MARK: H5 滞在しきる前に離れる
+    // MARK: H5 leaving before the dwell is up
 
     func test_滞在しきる前に戻ったら数えない() {
-        // 遷移アニメーションを挟んでも操作が滞在時間より速く終わるよう、長めにする
+        // Made long, so the interaction finishes inside the dwell even with a transition animation
         let app = launch(dwell: 8)
         app.buttons["probe.screen.push"].tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         expectStays(app, "screen", 0, seconds: 4)
     }
 
-    // MARK: H1 タブを離れて戻る
+    // MARK: H1 leaving a tab and coming back
 
     func test_タブを離れて戻ると数え直す() {
         let app = launch()
         app.buttons["probe.screen.push"].tap()
         expect(app, "screen", 1)
 
-        app.tabBars.buttons.element(boundBy: 1).tap()   // 一覧へ
-        app.tabBars.buttons.element(boundBy: 0).tap()   // 画面へ戻る
+        app.tabBars.buttons.element(boundBy: 1).tap()   // to the list
+        app.tabBars.buttons.element(boundBy: 0).tap()   // back to the screen
 
-        // **ここが落ちたら H1 を踏んでいる**（タブを離れても onDisappear が来ず、
-        // 露出の一区切りが終わらないので、戻ってきても数え直さない）
+        // **A failure here means hazard H1 has been hit** (leaving the tab brings no onDisappear,
+        // so the exposure never ends and coming back does not count again)
         expect(app, "screen", 2)
     }
 
-    // MARK: H2 シートを出し直す
+    // MARK: H2 presenting a sheet again
 
     func test_シートを出し直すと数え直す() {
         let app = launch()
@@ -119,28 +121,28 @@ final class ImpressionProbeTests: XCTestCase {
         expect(app, "sheet", 2)
     }
 
-    // MARK: H3 画面外の要素
+    // MARK: H3 an element that is off screen
 
     func test_画面外の要素は数えない() {
         let app = launch()
         app.tabBars.buttons.element(boundBy: 1).tap()
 
-        // **ここが 0 でなかったら H3 を踏んでいる**（遅延生成の行にも可視の通知が来ていて、
-        // 「見ていない露出」が数字に混ざる）
+        // **Anything but 0 here means hazard H3 has been hit** (visibility notifications are
+        // arriving for lazily built rows, mixing exposures nobody saw into the numbers)
         expectStays(app, "offscreen", 0, seconds: 3)
         expectStays(app, "row", 0)
     }
 
-    // MARK: H6 スクロールして見える／通り過ぎる
+    // MARK: H6 scrolling into view, and scrolling past
 
     func test_スクロールして留まったら数える() {
         let app = launch()
         app.tabBars.buttons.element(boundBy: 1).tap()
 
-        // **要素が掴めたか**ではなく**数字が変わったか**で進める。
-        // `isHittable` は、スクロールの中の要素については当てにならなかった
-        // （25 回送っても false のままで、実際には画面に出ていた）。
-        // どのみち確かめたいのは数字なので、そちらを直接見る。
+        // Driven by **whether the number moved**, not by **whether the element could be grabbed**.
+        // `isHittable` turned out to be unreliable for an element inside a scroll view (still
+        // false after 25 swipes, while it was plainly on screen). The number is what is being
+        // checked anyway, so look at that directly.
         let readout = app.staticTexts["probe.readout"]
         let list = app.scrollViews.firstMatch
         var attempts = 0

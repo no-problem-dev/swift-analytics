@@ -1,49 +1,42 @@
-[English](./README_EN.md) | 日本語
+English | [日本語](./README.ja.md)
 
 # swift-analytics
 
-プロダクト分析（人の行動の計測）のための語彙と、SwiftUI で**正しく数える**ための道具。
+Vocabulary for product analytics, and the tools to count it correctly in SwiftUI.
 
-`swift-log` / `swift-metrics` のような診断ログではありません。「何人が、どの画面で、
-何をしたか」を、あとから分析できる形で残すためのものです。
+![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
+![Platforms](https://img.shields.io/badge/Platforms-iOS%2017%20%7C%20macOS%2014%20%7C%20tvOS%2017%20%7C%20watchOS%2010%20%7C%20visionOS%201-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-- **外部依存ゼロ。** 送信先（Firebase / PostHog / 自前のサーバー）はこのパッケージに入っていません
-- **数え方をカタログが持つ。** 「1 インストールに 1 回」「見えて 1 秒で 1 回」を発火点に書かせません
-- **YAML のカタログから Swift を生成。** 文字列でイベントを送る口はありません
+This is not diagnostic logging (`swift-log` / `swift-metrics`). It records what people did, in a
+shape you can analyse later.
 
-## なぜ作ったか
+Analytics bugs are more often "fires too much" than "does not fire", and neither is caught by types,
+tests, review, or the dashboard. The usual cause is not that a call was written in two places — it
+is that **the counting rule was written nowhere**, so nobody could call the second call site a
+mistake. This package puts the counting rule in the vocabulary.
 
-計測の事故は「出ない」より「**出すぎる**」ほうが多く、そしてどちらもテストでもレビューでも
-ダッシュボードでも落ちません。
+## Features
 
-あるアプリで、初回体験の開始イベントが同意画面と本編の両方から撃たれ、1 インストールにつき
-2 回出ていました。完了率は実際の半分に見えていましたが、**型もテストも通り、
-ダッシュボードにも「それらしい数字」が並んでいました**。
+- **The catalog owns the counting rule.** "Once per install" and "once it has been visible for a
+  second" are declared in YAML, not remembered at the call site
+- **Swift is generated from that catalog.** There is no string-based send, so an event cannot be
+  misspelled or fired with parameters nobody declared
+- **Deduplication is enforced, not remembered.** `DedupingAnalytics` applies the declared scope;
+  call sites never ask "did I already fire this"
+- **Impressions have a definition that closes.** 50% of the area, continuously visible for 1.0
+  second, and the tracker holds no clock — so the rule is pinned in a unit test, with no simulator
+  and no real waiting
+- **A CI audit that grep cannot do.** Declared-but-never-fired events, the same firing appearing in
+  two places, and string sends that bypass the catalog all fail the build
+- **Zero external dependencies.** Vendor SDKs (Firebase, PostHog, your own server) live in separate
+  packages, because SwiftPM resolves dependencies per package
+- **An on-device log viewer.** Read what was actually sent, with its kind, its counting rule, and a
+  `×2` on anything that fired twice — no Mac attached
 
-原因は発火点を 2 箇所に書いたことではありません。**「1 インストールに 1 回」という決めが
-どこにも書かれていなかった**ので、2 箇所に書いたことを誰も間違いだと言えなかったことです。
+## Quick Start
 
-だから数え方を語彙に入れました。
-
-## 導入
-
-```swift
-.package(url: "https://github.com/no-problem-dev/swift-analytics.git", from: "0.1.0")
-```
-
-| プロダクト | 中身 | 依存 |
-|---|---|---|
-| `AnalyticsCore` | 語彙・ポート・数え方 | なし |
-| `AnalyticsSwiftUI` | 画面から撃つ層・端末で読むログ | SwiftUI |
-| `AnalyticsTesting` | テストの土台 | なし |
-
-送信先のアダプタは別パッケージです（[swift-analytics-firebase](https://github.com/no-problem-dev/swift-analytics-firebase)）。
-**同居させないのは、SwiftPM が依存をパッケージ単位で解決するから** ——
-語彙しか使わない消費者にまで vendor の SDK が降ってきてしまいます。
-
-## 使う
-
-### 1. カタログを書く
+Declare the event, and how it is counted:
 
 ```yaml
 # analytics.yaml
@@ -51,149 +44,62 @@ version: 1
 dialect: ga4
 swift:
   event_type: AppEvent
-  property_type: AppUserProperty
 
 events:
   - name: paywall_shown
     kind: impression        # screen | impression | interaction | outcome
     dedup: episode          # episode | session | install | always
-    description: 課金の案内が実際に見えた
-    parameters:
-      source:
-        type: enum
-        values: [teaser, solo_card, gate_402]
+    description: The paywall was actually seen
 ```
 
-仕様は [Schema/SCHEMA.md](./Schema/SCHEMA.md)。
-
-### 2. 生成する
+Generate the Swift, and commit the result — a change to analytics is a change to *what you decided
+to measure*, and the diff is the only review artifact:
 
 ```sh
 Scripts/analytics-gen.py generate --schema analytics.yaml --out Sources/App/Generated/AppAnalytics.swift
 ```
 
-**生成物はコミットします。** 計測の変更は「何を測ることにしたか」の変更であり、
-**差分が唯一のレビュー材料**だからです。ビルド時に生成すると、その差分を誰も見られなくなります。
-
-Python 3 だけで動きます（追加のインストールはありません）。
-
-### 3. 配線する
+Then the whole call site is one modifier:
 
 ```swift
-import AnalyticsCore
 import AnalyticsSwiftUI
 
-let analytics = DedupingAnalytics(
-    MultiplexAnalytics([ConsoleAnalytics(), FirebaseAnalyticsClient()])
-)
-
-ContentView().analytics(analytics)
+PaywallView().trackScreen(.paywallShown)
 ```
 
-### 4. 撃つ
+## Documentation
+
+[**API reference and guides**](https://no-problem-dev.github.io/swift-analytics/documentation/) —
+including [Getting Started](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/gettingstarted/),
+[Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/),
+and [What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/).
+
+The catalog file format is specified, in Japanese, in [Schema/SCHEMA.md](./Schema/SCHEMA.md).
+
+## Installation
 
 ```swift
-PaywallView()
-    .trackScreen(.paywallShown(source: .settings))   // 50% が 1 秒見えたら 1 回
-
-Button("招待を送る") {
-    analytics.track(.inviteShareOpened)
-}
+.package(url: "https://github.com/no-problem-dev/swift-analytics.git", from: "0.1.0")
 ```
 
-**「もう撃ったか」は書きません。** カタログの `dedup` を `DedupingAnalytics` と
-`ImpressionTracker` が実施します。
+| Product | Contents | Depends on |
+|---|---|---|
+| `AnalyticsCore` | Vocabulary, ports, counting rules | nothing |
+| `AnalyticsSwiftUI` | Firing from views, on-device log viewer | SwiftUI |
+| `AnalyticsTesting` | Test doubles | nothing |
 
-### 5. CI で守る
+Vendor adapters are separate packages — see
+[swift-analytics-firebase](https://github.com/no-problem-dev/swift-analytics-firebase). Bundling one
+here would pull a vendor SDK into consumers that only use the vocabulary.
 
-```sh
-Scripts/analytics-gen.py check --schema analytics.yaml --out Sources/App/Generated/AppAnalytics.swift
-Scripts/analytics-gen.py audit --schema analytics.yaml --sources Sources/
-```
+The generator runs on Python 3 alone; there is nothing to install.
 
-`audit` が落とすもの:
+## Requirements
 
-- カタログにあるのに撃たれていない出来事・値・属性（宣言だけ残ると、ダッシュボードの 0 が「使われていない」と読める）
-- **同じ発火が 2 箇所以上にある**（grep では見えない）
-- カタログを迂回した文字列直書き
+- iOS 17.0+ / macOS 14.0+ / tvOS 17.0+ / watchOS 10.0+ / visionOS 1.0+
+- Swift 6.2+
+- Python 3 (for the catalog generator only)
 
-## 「見えた」の定義
+## License
 
-```
-面積の 50% 以上が、連続して 1.0 秒以上見えていたら 1 回
-```
-
-広告計測で決着している基準（MRC）に合わせています。業界標準だからではなく、
-**時間を入れないと定義が閉じないから**です。面積だけでは「一瞬映った」を排除できず、
-`onAppear` の穴がそのまま残ります。
-
-判定は `ImpressionTracker` が持ち、**時計を持ちません**。「何秒待て」を返すだけなので、
-シミュレータも実時間の待ちもなしに数え方を固定できます。
-
-```swift
-var tracker = ImpressionTracker()
-#expect(tracker.visibility(1.0) == .startDwell(1.0))
-#expect(tracker.visibility(0.0) == .cancelDwell)
-#expect(tracker.dwellCompleted() == false)   // 0.9 秒で消えたら数えない
-```
-
-### 繋ぎもテストできます
-
-**事故が起きるのは定義ではなく繋ぎのほう**です。`onAppear` を 2 箇所に書いた、
-`onDisappear` で待ちを止め忘れた、背面でも走り続けた —— どれも `ImpressionTracker` では落ちません。
-
-だから ViewModifier は `ImpressionSession` へ流すだけにしてあり、判断も待ちもそちらにあります。
-待ちは注入できるので、**実時間もシミュレータも要りません**。
-
-```swift
-let session = ImpressionSession(event: event, client: recorder, sleep: { _ in })
-
-session.appeared()
-await session.settled()
-session.appeared()          // SwiftUI の再入
-await session.settled()
-#expect(recorder.count(of: "paywall_shown") == 1)   // 増えない
-```
-
-固定してあるのは 10 件 —— 二重の onAppear・途中で閉じた・戻ってきた・背面・
-スクロールで通り過ぎた・同じ露出で見え隠れした、など。
-
-## 事実は送りません
-
-「買った」「世帯ができた」「通知を送った」のような**ドメインの事実は、クライアントから
-送りません**。事実はサーバーに永続化されていて、それが正典だからです。
-
-同じことをイベントでも送ると必ず食い違い、しかもどちらが正しいかを判定する手段が
-なくなります（オフラインで記録して後から同期された分は、発生時刻と送信時刻がずれます）。
-数えるときはサーバーのデータを SQL で引きます。
-
-この規律のおかげで、**ユースケース層に計測を挿す必要が消えます** ——
-計測がアーキテクチャに寄生しません。
-
-## 端末で確かめる
-
-送信先のデバッグ画面は反映に間があり、`os.Logger` は Mac に繋がないと読めません。
-**通知から戻ってきたときの計測は、Xcode を繋いだ状態では再現しにくい**ので、
-端末だけで読める口を用意しています。
-
-```swift
-let log = AnalyticsLog()
-let analytics = DedupingAnalytics(MultiplexAnalytics([
-    ConsoleAnalytics(), LoggingAnalytics(log: log), firebase
-]))
-
-NavigationLink("計測ログ") { AnalyticsLogViewer(log: log) }
-```
-
-見せているのは 3 つです。
-
-- **何が出たか**（名前と引数）
-- **どう数えるはずのものか**（種別と数え方）—— 期待とずれた瞬間に目で分かる
-- **何回出たか** —— 2 回以上出ているものに `×2` が付く。計測の事故はたいてい「出すぎ」
-
-`LoggingAnalytics` は **`DedupingAnalytics` の内側**に置きます。外に置くと間引かれたものまで
-並んで「2 回出ている」と読めてしまうので、実際に送られたものだけを控えます。
-
-## ライセンス
-
-MIT
+MIT — see [LICENSE](LICENSE).
