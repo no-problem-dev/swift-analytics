@@ -21,6 +21,9 @@ let package = Package(
         .library(name: "AnalyticsCore", targets: ["AnalyticsCore"]),
         // The layer that fires from a view tree. Depends only on SwiftUI.
         .library(name: "AnalyticsSwiftUI", targets: ["AnalyticsSwiftUI"]),
+        // Keeps occurrences in a file and sends them in batches through a closure the app writes.
+        // Depends only on AnalyticsCore — the URL, auth, and response handling stay in the app.
+        .library(name: "AnalyticsBatchSink", targets: ["AnalyticsBatchSink"]),
         // Test doubles. **Never import this from a shipping target.**
         .library(name: "AnalyticsTesting", targets: ["AnalyticsTesting"])
     ],
@@ -31,8 +34,10 @@ let package = Package(
         .target(name: "AnalyticsCore"),
         .target(name: "AnalyticsSwiftUI", dependencies: ["AnalyticsCore"]),
         .target(name: "AnalyticsTesting", dependencies: ["AnalyticsCore"]),
+        .target(name: "AnalyticsBatchSink", dependencies: ["AnalyticsCore"]),
 
         .testTarget(name: "AnalyticsCoreTests", dependencies: ["AnalyticsCore", "AnalyticsTesting"]),
-        .testTarget(name: "AnalyticsSwiftUITests", dependencies: ["AnalyticsSwiftUI", "AnalyticsTesting"])
+        .testTarget(name: "AnalyticsSwiftUITests", dependencies: ["AnalyticsSwiftUI", "AnalyticsTesting"]),
+        .testTarget(name: "AnalyticsBatchSinkTests", dependencies: ["AnalyticsBatchSink", "AnalyticsCore"])
     ]
 )
