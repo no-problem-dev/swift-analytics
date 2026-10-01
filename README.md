@@ -86,7 +86,7 @@ shape of the `--json` output — is specified, in Japanese, in [Schema/SCHEMA.md
 ## Installation
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.1.0"))
+.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.2.0"))
 ```
 
 | Product | Contents | Depends on |

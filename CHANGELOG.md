@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-01
+
 Adds a first-party pipeline next to the vendor adapters: a sink that keeps events on the device
 and sends them in batches through a closure the app writes, an off switch that remembers the
 person's choice, and a generator dialect for a receiver of your own. **Contains breaking changes**

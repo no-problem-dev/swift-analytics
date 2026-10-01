@@ -81,7 +81,7 @@ PaywallView().trackScreen(.paywallShown)
 ## 導入
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.1.0"))
+.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.2.0"))
 ```
 
 | プロダクト | 中身 | 依存 |
