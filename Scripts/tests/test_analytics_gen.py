@@ -301,3 +301,36 @@ class SwiftKeywordCaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AuditScopeTests(unittest.TestCase):
+    def test_values_are_matched_within_the_event_sites(self):
+        schema = load("""
+            dialect: first_party
+            events:
+              - name: sign_in_finished
+                kind: outcome
+                dedup: always
+                parameters:
+                  result:
+                    type: enum
+                    type_name: SignInResult
+                    values: [signed_in, failed]
+              - name: paste_finished
+                kind: outcome
+                dedup: always
+                parameters:
+                  result:
+                    type: enum
+                    type_name: PasteResult
+                    values: [imported, failed]
+        """)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "Sites.swift"
+            source.write_text(textwrap.dedent("""
+                analytics.track(.signInFinished(result: .signedIn))
+                analytics.track(.signInFinished(result: .failed))
+                analytics.track(.pasteFinished(result: computed))
+            """), encoding="utf-8")
+            self.assertEqual(gen.audit(schema, [Path(directory)]), [])
+

@@ -889,8 +889,10 @@ def audit(schema: Schema, roots: list[Path]) -> list[str]:
         if not re.search(rf"\.{event.case}\b", corpus):
             problems.append(f"{event.name}（.{event.case}）を撃っている場所が無い")
             continue
+        # 値はその出来事を撃っている式の中だけで探す。ほかの出来事や属性に同じ名前の値があっても数えない。
+        own = "\n".join(expression for _, expression, _ in sites if re.search(rf"\.{event.case}\b", expression))
         for parameter in (p for p in event.parameters if p.type == "enum"):
-            literal = [v for v in parameter.values if re.search(rf"\.{lower_camel(v)}\b", corpus)]
+            literal = [v for v in parameter.values if re.search(rf"\.{lower_camel(v)}\b", own)]
             if not literal:
                 # 値をすべて計算式で渡している。静的には確かめられないので落とさない。
                 continue
