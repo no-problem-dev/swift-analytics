@@ -281,5 +281,23 @@ class JsonCatalog(unittest.TestCase):
         self.assertEqual(gen.render(schema), swift)
 
 
+class SwiftKeywordCaseTests(unittest.TestCase):
+    def test_keyword_values_are_escaped(self):
+        schema = load("""
+            dialect: first_party
+            events:
+              - name: address_copied
+                kind: interaction
+                dedup: always
+                parameters:
+                  from:
+                    type: enum
+                    values: [import, settings, live_activity]
+        """)
+        swift = gen.render(schema)
+        self.assertIn("case `import`", swift)
+        self.assertIn("case settings", swift)
+        self.assertIn('case liveActivity = "live_activity"', swift)
+
 if __name__ == "__main__":
     unittest.main()

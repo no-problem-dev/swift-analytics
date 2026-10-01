@@ -198,6 +198,24 @@ def lower_camel(snake: str) -> str:
     return head + "".join(part.capitalize() for part in rest)
 
 
+# 値から作った case の名前が Swift の予約語になるときは `` で囲む（`import` など）。呼び出し側の `.import` は囲まなくてよい。
+SWIFT_KEYWORDS = {
+    "associatedtype", "class", "deinit", "enum", "extension", "fileprivate", "func", "import", "init", "inout",
+    "internal", "let", "open", "operator", "private", "precedencegroup", "protocol", "public", "rethrows", "static",
+    "struct", "subscript", "typealias", "var", "break", "case", "catch", "continue", "default", "defer", "do", "else",
+    "fallthrough", "for", "guard", "if", "in", "repeat", "return", "throw", "switch", "where", "while", "as", "false",
+    "is", "nil", "self", "super", "throws", "true", "try", "await", "async", "any", "some", "consume", "copy",
+}
+
+
+def swift_case(value: str) -> str:
+    """値集合の 1 つの値の `case` 宣言（名前と、名前と違うときの生の値）。"""
+    name = lower_camel(value)
+    declared = f"`{name}`" if name in SWIFT_KEYWORDS else name
+    raw = f' = "{value}"' if name != value else ""
+    return f"{declared}{raw}"
+
+
 def upper_camel(snake: str) -> str:
     return "".join(part.capitalize() for part in snake.split("_"))
 
@@ -547,7 +565,7 @@ def render(schema: Schema) -> str:
     out: list[str] = [
         HEADER,
         "//",
-        "// 正典は analytics.yaml。**先にそちらを直してから生成する。**",
+        "// 元は analytics.yaml。**先にそちらを直してから生成する。**",
         "",
         "import AnalyticsCore",
     ]
@@ -585,9 +603,7 @@ def _render_events(schema: Schema) -> list[str]:
             lines.append(f"    /// `{event.name}.{parameter.key}` の値。" + (parameter.description or ""))
             lines.append(f"    public enum {parameter.swift_type_name}: String, Sendable, CaseIterable {{")
             for value in parameter.values:
-                case_name = lower_camel(value)
-                raw = f' = "{value}"' if case_name != value else ""
-                lines.append(f"        case {case_name}{raw}")
+                lines.append(f"        case {swift_case(value)}")
             lines.append("    }")
             lines.append("")
 
@@ -620,7 +636,7 @@ def _render_token(event: Event, parameter: Parameter) -> list[str]:
         "",
         "        public let rawValue: String",
         "",
-        "        /// 形に合わなければ nil。**送らずに済ませる**（形を崩して送るより、送らない方が数を壊さない）。",
+        "        /// 形に合わなければ nil。**送らずに済ませる**（形の違う値を送るより、送らない方が数を壊さない）。",
         "        public init?(_ rawValue: String) {",
         f"            guard rawValue.count <= {parameter.max_length},",
         f"                  let pattern = try? Regex({literal}),",
@@ -715,9 +731,7 @@ def _render_properties(schema: Schema) -> list[str]:
         lines.append(f"    /// `{prop.name}` の値。")
         lines.append(f"    public enum {prop.swift_type_name}: String, Sendable, CaseIterable {{")
         for value in prop.values:
-            case_name = lower_camel(value)
-            raw = f' = "{value}"' if case_name != value else ""
-            lines.append(f"        case {case_name}{raw}")
+            lines.append(f"        case {swift_case(value)}")
         lines.append("    }")
         lines.append("")
 
@@ -758,7 +772,7 @@ def _render_typed_entry_points(schema: Schema) -> list[str]:
     発火点の書き味を保つ（Ampli / Avo の codegen wrapper と同じ役割）。
     """
     lines = [
-        "// MARK: - 型付きの入口",
+        "// MARK: - 型付きの track と setUserProperty",
         "//",
         "// ポートは `any AnalyticsEvent` を受け取るので、これが無いと発火点で先頭ドットが使えない。",
         "",

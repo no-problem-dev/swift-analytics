@@ -1,6 +1,6 @@
 // このファイルは analytics-gen.py が書き出しています。手で編集しないでください。
 //
-// 正典は analytics.yaml。**先にそちらを直してから生成する。**
+// 元は analytics.yaml。**先にそちらを直してから生成する。**
 
 import AnalyticsCore
 
@@ -50,7 +50,7 @@ public enum TripEvent: AnalyticsEvent {
 
         public let rawValue: String
 
-        /// 形に合わなければ nil。**送らずに済ませる**（形を崩して送るより、送らない方が数を壊さない）。
+        /// 形に合わなければ nil。**送らずに済ませる**（形の違う値を送るより、送らない方が数を壊さない）。
         public init?(_ rawValue: String) {
             guard rawValue.count <= 64,
                   let pattern = try? Regex(#"[A-Za-z0-9_-]{8,40}"#),
@@ -69,7 +69,7 @@ public enum TripEvent: AnalyticsEvent {
 
         public let rawValue: String
 
-        /// 形に合わなければ nil。**送らずに済ませる**（形を崩して送るより、送らない方が数を壊さない）。
+        /// 形に合わなければ nil。**送らずに済ませる**（形の違う値を送るより、送らない方が数を壊さない）。
         public init?(_ rawValue: String) {
             guard rawValue.count <= 64,
                   let pattern = try? Regex(#"[a-z]+:[A-Za-z0-9_-]{1,56}"#),
@@ -151,7 +151,7 @@ public enum TripUserProperty: AnalyticsUserProperty {
     }
 }
 
-// MARK: - 型付きの入口
+// MARK: - 型付きの track と setUserProperty
 //
 // ポートは `any AnalyticsEvent` を受け取るので、これが無いと発火点で先頭ドットが使えない。
 
