@@ -27,8 +27,13 @@
   シミュレータも実時間の待ちもなしにユニットテストで固定できます
 - **grep では書けない CI 監査。** 宣言だけで撃たれていない出来事・同じ発火が 2 箇所にあること・
   カタログを迂回した文字列直書きを、すべてビルドで落とします
-- **外部依存ゼロ。** SwiftPM は依存をパッケージ単位で解決するので、送信先（Firebase / PostHog /
-  自前のサーバー）は別パッケージに置いています
+- **自前の送り先も選べる。** `AnalyticsBatchSink` が端末のファイルに溜めて、アプリが書いた送信の処理で
+  まとめて送ります。生成器の `first_party` 方言は受け口の列の上限でカタログを検査し、受け口のための
+  カタログを JSON でも書き出します
+- **覚えている止めスイッチ。** `AnalyticsSwitch` は、本人が止めている間のすべてを捨て、その選択を
+  起動をまたいで覚え、溜めた物を消します
+- **外部依存ゼロ。** SwiftPM は依存をパッケージ単位で解決するので、vendor の SDK（Firebase / PostHog）は
+  別パッケージに置いています。自前のサーバーへの送信も、URL と認証はアプリが書きます
 - **端末で読めるログ画面。** 実際に送られたものを、種別・数え方つきで、2 回出ているものには `×2` を付けて表示します
 
 ## クイックスタート
@@ -71,7 +76,7 @@ PaywallView().trackScreen(.paywallShown)
 [Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/)、
 [What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/) を含みます。
 
-カタログの書式は [Schema/SCHEMA.md](./Schema/SCHEMA.md) が仕様です。
+カタログの書式（`first_party` 方言・`token` 型・`--json` の形を含む）は [Schema/SCHEMA.md](./Schema/SCHEMA.md) が仕様です。
 
 ## 導入
 
@@ -83,6 +88,7 @@ PaywallView().trackScreen(.paywallShown)
 |---|---|---|
 | `AnalyticsCore` | 語彙・ポート・数え方 | なし |
 | `AnalyticsSwiftUI` | 画面から撃つ層・端末で読むログ | SwiftUI |
+| `AnalyticsBatchSink` | 端末に溜めて、自前のサーバーへまとめて送る | `AnalyticsCore` |
 | `AnalyticsTesting` | テストの土台 | なし |
 
 送信先のアダプタは別パッケージです（[swift-analytics-firebase](https://github.com/no-problem-dev/swift-analytics-firebase)）。

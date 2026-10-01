@@ -5,7 +5,8 @@
 /// vendor's SDK onto consumers that only wanted the vocabulary**.
 ///
 /// Write the adapter in about 20 lines inside the app, or add it from a separate package such as
-/// `swift-analytics-firebase`.
+/// `swift-analytics-firebase`. For a first-party server, `AnalyticsBatchSink` in this package keeps
+/// and batches, and takes the actual send as a closure the app writes.
 ///
 /// ## Sending is fire-and-forget
 ///

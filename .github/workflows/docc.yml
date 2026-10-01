@@ -34,7 +34,7 @@ jobs:
           swift package --allow-writing-to-directory ./docs \
             generate-documentation \
             --enable-experimental-combined-documentation \
-            --target AnalyticsCore --target AnalyticsSwiftUI --target AnalyticsTesting \
+            --target AnalyticsCore --target AnalyticsSwiftUI --target AnalyticsTesting --target AnalyticsBatchSink \
             --disable-indexing \
             --transform-for-static-hosting \
             --hosting-base-path swift-analytics \

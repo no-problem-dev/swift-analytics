@@ -5,3 +5,4 @@ builder:
         - AnalyticsCore
         - AnalyticsSwiftUI
         - AnalyticsTesting
+        - AnalyticsBatchSink

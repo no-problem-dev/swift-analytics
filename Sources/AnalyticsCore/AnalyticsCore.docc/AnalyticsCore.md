@@ -19,8 +19,9 @@ import from a domain or use-case layer. It defines three things and nothing else
 
 Sending is a port, not an implementation. ``AnalyticsClient`` has two methods, and the concrete
 destinations are supplied by the composition root: ``ConsoleAnalytics`` during development,
-``NoopAnalytics`` in previews, ``MultiplexAnalytics`` to fan out to several at once, and a vendor
-adapter such as `swift-analytics-firebase` in release builds.
+``NoopAnalytics`` in previews, ``MultiplexAnalytics`` to fan out to several at once, and in release
+builds either a vendor adapter such as `swift-analytics-firebase` or `AnalyticsBatchSink` for a
+first-party receiver. ``AnalyticsSwitch`` goes in front of all of them, as the person's off switch.
 
 The two rules that make the numbers trustworthy are written up separately:
 <doc:CountingRules> explains what "seen" means and how each deduplication scope behaves, and
@@ -50,6 +51,7 @@ The two rules that make the numbers trustworthy are written up separately:
 ### Sending
 
 - ``AnalyticsClient``
+- ``AnalyticsSwitch``
 - ``MultiplexAnalytics``
 - ``ConsoleAnalytics``
 - ``NoopAnalytics``

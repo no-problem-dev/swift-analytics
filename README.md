@@ -29,8 +29,14 @@ mistake. This package puts the counting rule in the vocabulary.
   and no real waiting
 - **A CI audit that grep cannot do.** Declared-but-never-fired events, the same firing appearing in
   two places, and string sends that bypass the catalog all fail the build
-- **Zero external dependencies.** Vendor SDKs (Firebase, PostHog, your own server) live in separate
-  packages, because SwiftPM resolves dependencies per package
+- **A first-party pipeline, if you want one.** `AnalyticsBatchSink` keeps events in a file and
+  sends them in batches through a closure you write; the generator's `first_party` dialect holds
+  the catalog to a receiver's column limits and writes the receiver's copy of the catalog as JSON
+- **An off switch that remembers.** `AnalyticsSwitch` drops everything while the person has turned
+  measurement off, keeps that choice across launches, and erases what was buffered
+- **Zero external dependencies.** Vendor SDKs (Firebase, PostHog) live in separate packages,
+  because SwiftPM resolves dependencies per package. For your own server, the app writes the URL
+  and the authentication
 - **An on-device log viewer.** Read what was actually sent, with its kind, its counting rule, and a
   `×2` on anything that fired twice — no Mac attached
 
@@ -74,7 +80,8 @@ including [Getting Started](https://no-problem-dev.github.io/swift-analytics/doc
 [Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/),
 and [What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/).
 
-The catalog file format is specified, in Japanese, in [Schema/SCHEMA.md](./Schema/SCHEMA.md).
+The catalog file format — including the `first_party` dialect, the `token` parameter type, and the
+shape of the `--json` output — is specified, in Japanese, in [Schema/SCHEMA.md](./Schema/SCHEMA.md).
 
 ## Installation
 
@@ -86,6 +93,7 @@ The catalog file format is specified, in Japanese, in [Schema/SCHEMA.md](./Schem
 |---|---|---|
 | `AnalyticsCore` | Vocabulary, ports, counting rules | nothing |
 | `AnalyticsSwiftUI` | Firing from views, on-device log viewer | SwiftUI |
+| `AnalyticsBatchSink` | Keeps events on the device and sends them in batches to your own server | `AnalyticsCore` |
 | `AnalyticsTesting` | Test doubles | nothing |
 
 Vendor adapters are separate packages — see

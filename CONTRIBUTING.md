@@ -15,6 +15,9 @@ swift build
 swift test
 ```
 
+`swift test` also runs the catalog generator's own tests (`Scripts/tests/`, Python standard
+library only). To run just those: `python3 -m unittest discover -s Scripts/tests`.
+
 **Verification happens here, not in CI.** The release workflow does not build or
 test — it only turns a tag into a GitHub Release. Run both commands locally and
 make sure they pass before opening a pull request.
