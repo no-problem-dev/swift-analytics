@@ -51,3 +51,6 @@ Package.resolved
 # サンプルアプリの生成物
 Example/*.xcodeproj
 Example/.build/
+
+# Python
+__pycache__/

@@ -1,0 +1,159 @@
+{
+  "format": 1,
+  "generator": "swift-analytics/Scripts/analytics-gen.py",
+  "catalogVersion": 1,
+  "dialect": "first_party",
+  "limits": {
+    "value": 64,
+    "name": 40,
+    "dimensions": 4,
+    "numbers": 1,
+    "tokens": 2
+  },
+  "events": [
+    {
+      "name": "app_opened",
+      "kind": "screen",
+      "dedup": "session",
+      "parameters": [
+        {
+          "key": "first_launch",
+          "type": "flag"
+        },
+        {
+          "key": "entry",
+          "type": "enum",
+          "values": [
+            "icon",
+            "notification",
+            "widget",
+            "link"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "trip_created",
+      "kind": "outcome",
+      "dedup": "always",
+      "parameters": [
+        {
+          "key": "source",
+          "type": "enum",
+          "values": [
+            "destination",
+            "paste",
+            "sample_copy"
+          ]
+        },
+        {
+          "key": "nth",
+          "type": "bucket",
+          "edges": [
+            1,
+            2,
+            3
+          ],
+          "values": [
+            "0",
+            "1_1",
+            "2_2",
+            "3_plus"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "block_seen",
+      "kind": "impression",
+      "dedup": "always",
+      "parameters": [
+        {
+          "key": "render_id",
+          "type": "token",
+          "pattern": "[A-Za-z0-9_-]{8,40}",
+          "maxLength": 64
+        },
+        {
+          "key": "block_key",
+          "type": "token",
+          "pattern": "[a-z]+:[A-Za-z0-9_-]{1,56}",
+          "maxLength": 64
+        },
+        {
+          "key": "position",
+          "type": "bucket",
+          "edges": [
+            1,
+            2,
+            3,
+            5,
+            10
+          ],
+          "values": [
+            "0",
+            "1_1",
+            "2_2",
+            "3_4",
+            "5_9",
+            "10_plus"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "consult_answer_finished",
+      "kind": "outcome",
+      "dedup": "always",
+      "parameters": [
+        {
+          "key": "result",
+          "type": "enum",
+          "values": [
+            "completed",
+            "failed",
+            "interrupted"
+          ]
+        },
+        {
+          "key": "seconds_to_first_reply",
+          "type": "number"
+        }
+      ]
+    }
+  ],
+  "userProperties": [
+    {
+      "name": "plan",
+      "type": "enum",
+      "values": [
+        "free",
+        "trial",
+        "yearly",
+        "monthly"
+      ]
+    },
+    {
+      "name": "trips",
+      "type": "bucket",
+      "edges": [
+        1,
+        2,
+        5
+      ],
+      "values": [
+        "0",
+        "1_1",
+        "2_4",
+        "5_plus"
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "name": "trips_created_daily",
+      "source": "d1",
+      "query": "queries/trips_created_daily.sql"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+# 自前の受け口へ送るアプリのカタログの例。仕様は SCHEMA.md。
+#
+# `dialect: first_party` は、受け口の列に収まる形だけを通す（次元 4・数 1・token 2・値 64 字）。
+# `--json` で、受け口が照らし合わせに使う JSON も書き出す。
+
+version: 1
+dialect: first_party
+
+swift:
+  event_type: TripEvent
+  property_type: TripUserProperty
+  module: TripEvents
+  swiftui: false
+
+events:
+  - name: app_opened
+    kind: screen
+    dedup: session
+    description: アプリを開いた
+    parameters:
+      first_launch:
+        type: flag
+      entry:
+        type: enum
+        values: [icon, notification, widget, link]
+
+  - name: trip_created
+    kind: outcome
+    dedup: always
+    description: 旅行の作成が終わった
+    parameters:
+      source:
+        type: enum
+        values: [destination, paste, sample_copy]
+      nth:
+        type: bucket
+        edges: [1, 2, 3]
+
+  - name: block_seen
+    kind: impression
+    dedup: always
+    description: 候補のブロックが半分以上、1 秒見えた
+    parameters:
+      render_id:
+        type: token
+        pattern: "[A-Za-z0-9_-]{8,40}"
+        description: サーバーが面ごとに作った不透明な値
+      block_key:
+        type: token
+        pattern: "[a-z]+:[A-Za-z0-9_-]{1,56}"
+        max_length: 64
+        description: 意味で決めたブロックのキー
+      position:
+        type: bucket
+        edges: [1, 2, 3, 5, 10]
+
+  - name: consult_answer_finished
+    kind: outcome
+    dedup: always
+    description: 相談の答えの流しが終わった
+    parameters:
+      result:
+        type: enum
+        type_name: AnswerResult     # 出来事ごとに値が違う `result` は型名を分ける
+        values: [completed, failed, interrupted]
+      seconds_to_first_reply:
+        type: number
+
+user_properties:
+  - name: plan
+    type: enum
+    values: [free, trial, yearly, monthly]
+    description: 購読の状態
+
+  - name: trips
+    type: bucket
+    edges: [1, 2, 5]
+    description: 端末にある旅行の数の帯
+
+facts:
+  - name: trips_created_daily
+    description: 旅行の行ができた日ごとの数
+    source: d1
+    query: queries/trips_created_daily.sql

@@ -3,8 +3,8 @@
 
 スキーマの仕様は ``Schema/SCHEMA.md``。
 
-    analytics-gen.py generate --schema analytics.yaml --out Generated/AppAnalytics.swift
-    analytics-gen.py check    --schema analytics.yaml --out Generated/AppAnalytics.swift
+    analytics-gen.py generate --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json]
+    analytics-gen.py check    --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json]
     analytics-gen.py audit    --schema analytics.yaml --sources Sources/
 
 **生成は人の手元で走らせ、生成物をコミットする。** ビルド時に生成しないのは、計測の変更が
@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -40,9 +41,33 @@ GA4_RESERVED_NAMES = {
     "session_start", "session_start_with_rollout", "user_engagement",
 }
 
+# 自前の受け口（first_party）の制約。受け口の列の割り当てに収まる形にする。
+#
+# - 次元（enum・flag・bucket）は 4 つまで、数（count・number）は 1 つまで、token は 2 つまで。
+#   受け口は 1 件を「名前・種別・次元 4 つ・token 2 つ・数 1 つ」の列に書く
+# - 値（enum の値・token の長さ）は 64 字まで
+FIRST_PARTY_NAME_LIMIT = 40
+FIRST_PARTY_DIMENSION_LIMIT = 4
+FIRST_PARTY_NUMBER_LIMIT = 1
+FIRST_PARTY_TOKEN_LIMIT = 2
+FIRST_PARTY_VALUE_LIMIT = 64
+
+DIALECTS = {"ga4", "first_party"}
+VALUE_LIMITS = {"ga4": GA4_VALUE_LIMIT, "first_party": FIRST_PARTY_VALUE_LIMIT}
+
 KINDS = {"screen", "impression", "interaction", "outcome"}
 SCOPES = {"session", "install", "always"}
 PARAM_TYPES = {"enum", "count", "number", "flag", "bucket"}
+# token はサーバーが作った不透明な値と、意味で決めたキーのためだけにある。属性には使えない。
+EVENT_PARAM_TYPES = PARAM_TYPES | {"token"}
+DIMENSION_TYPES = {"enum", "flag", "bucket"}
+NUMBER_TYPES = {"count", "number"}
+
+# 引数の名前に、人を指す値や人が書いた文を思わせる語を使わせない。`_` で区切った語ごとに見る
+# （`placement` は通し、`place_name` は落とす）。
+FORBIDDEN_PARAMETER_WORDS = {"name", "email", "place", "text", "title", "address"}
+
+JSON_FORMAT = 1
 
 
 class SchemaError(Exception):
@@ -187,6 +212,8 @@ class Parameter:
     edges: list[int] = field(default_factory=list)
     description: str = ""
     type_name: str = ""
+    pattern: str = ""
+    max_length: int = 0
 
     @property
     def swift_label(self) -> str:
@@ -235,6 +262,14 @@ class UserProperty:
 
 
 @dataclass
+class Fact:
+    name: str
+    source: str = ""
+    query: str = ""
+    description: str = ""
+
+
+@dataclass
 class Schema:
     event_type: str
     property_type: str
@@ -243,6 +278,12 @@ class Schema:
     dialect: str
     events: list[Event]
     properties: list[UserProperty]
+    version: int = 1
+    facts: list[Fact] = field(default_factory=list)
+
+    @property
+    def value_limit(self) -> int:
+        return VALUE_LIMITS.get(self.dialect, GA4_VALUE_LIMIT)
 
 
 def load(path: Path) -> Schema:
@@ -256,9 +297,24 @@ def load(path: Path) -> Schema:
         dialect=raw.get("dialect", "ga4"),
         events=[_event(item) for item in raw.get("events") or []],
         properties=[_property(item) for item in raw.get("user_properties") or []],
+        version=raw.get("version", 1),
+        facts=[_fact(item) for item in raw.get("facts") or []],
     )
+    for event in schema.events:
+        for parameter in event.parameters:
+            if parameter.type == "token" and not parameter.max_length:
+                parameter.max_length = schema.value_limit
     validate(schema)
     return schema
+
+
+def _fact(item: dict) -> Fact:
+    return Fact(
+        name=_require(item, "name"),
+        source=str(item.get("source", "")),
+        query=str(item.get("query", "")),
+        description=str(item.get("description", "")),
+    )
 
 
 def _event(item: dict) -> Event:
@@ -284,6 +340,8 @@ def _parameter(key: str, value: dict) -> Parameter:
         edges=list(value.get("edges") or []),
         description=value.get("description", ""),
         type_name=str(value.get("type_name") or ""),
+        pattern=str(value.get("pattern") or ""),
+        max_length=int(value.get("max_length") or 0),
     )
 
 
@@ -316,6 +374,12 @@ def validate(schema: Schema) -> None:
     seen_cases: set[str] = set()
     # 値集合は複数の出来事で共有できる。**同じ名前で中身が違うものだけを落とす。**
     value_sets: dict[str, list[str]] = {}
+    token_shapes: dict[str, tuple[str, int]] = {}
+
+    if schema.dialect not in DIALECTS:
+        problems.append(f"dialect が {sorted(DIALECTS)} のどれでもない（{schema.dialect}）")
+    if not isinstance(schema.version, int) or schema.version < 1:
+        problems.append(f"version は 1 以上の整数（{schema.version}）")
 
     for event in schema.events:
         if event.kind not in KINDS:
@@ -334,8 +398,24 @@ def validate(schema: Schema) -> None:
         seen_names[signature] = event.name
 
         for parameter in event.parameters:
-            problems += _validate_parameter(event.name, parameter)
+            problems += _validate_parameter(event.name, parameter, value_limit=schema.value_limit)
+            if parameter.type == "token":
+                name = parameter.swift_type_name
+                shape = (parameter.pattern, parameter.max_length)
+                existing_shape = token_shapes.get(name)
+                if existing_shape is not None and existing_shape != shape:
+                    problems.append(
+                        f"{event.name}.{parameter.key}: token の型 {name} の形が別の場所と食い違う"
+                        f"（{existing_shape} と {shape}）。type_name で名前を分けてください"
+                    )
+                token_shapes[name] = shape
+                if name in value_sets:
+                    problems.append(f"{event.name}.{parameter.key}: 型名 {name} が enum と token の両方に使われている")
             if parameter.type == "enum":
+                if parameter.swift_type_name in token_shapes:
+                    problems.append(
+                        f"{event.name}.{parameter.key}: 型名 {parameter.swift_type_name} が enum と token の両方に使われている"
+                    )
                 name = parameter.swift_type_name
                 existing = value_sets.get(name)
                 if existing is not None and existing != parameter.values:
@@ -349,6 +429,8 @@ def validate(schema: Schema) -> None:
             problems += _validate_ga4_name(event.name, reserved_names=True)
             if len(event.parameters) > GA4_PARAMETER_LIMIT:
                 problems.append(f"{event.name}: パラメータが {len(event.parameters)} 個（GA4 の上限 {GA4_PARAMETER_LIMIT}）")
+        if schema.dialect == "first_party":
+            problems += _validate_first_party_event(event)
 
     for prop in schema.properties:
         if prop.type not in PARAM_TYPES:
@@ -359,26 +441,89 @@ def validate(schema: Schema) -> None:
             problems.append(f"{prop.name}: bucket なのに edges が無い")
         if schema.dialect == "ga4":
             problems += _validate_ga4_name(prop.name, reserved_names=False)
+        if schema.dialect == "first_party":
+            problems += _validate_first_party_name(prop.name, what="属性の名前")
+        for value in prop.values:
+            if len(value) > schema.value_limit:
+                problems.append(f"{prop.name}: 値 {value} が {schema.value_limit} 字を超える")
 
     if problems:
         raise SchemaError("スキーマに問題があります:\n  - " + "\n  - ".join(problems))
 
 
-def _validate_parameter(owner: str, parameter: Parameter) -> list[str]:
+def _validate_parameter(owner: str, parameter: Parameter, *, value_limit: int) -> list[str]:
     problems: list[str] = []
-    if parameter.type not in PARAM_TYPES:
-        problems.append(f"{owner}.{parameter.key}: type が {sorted(PARAM_TYPES)} のどれでもない")
+    if parameter.type not in EVENT_PARAM_TYPES:
+        problems.append(f"{owner}.{parameter.key}: type が {sorted(EVENT_PARAM_TYPES)} のどれでもない")
         return problems
+    forbidden = sorted(FORBIDDEN_PARAMETER_WORDS.intersection(parameter.key.split("_")))
+    if forbidden:
+        problems.append(
+            f"{owner}.{parameter.key}: 引数の名前に {', '.join(forbidden)} は使えない"
+            "（人を指す値・人が書いた文を送らない）"
+        )
     if parameter.type == "enum":
         if not parameter.values:
             problems.append(f"{owner}.{parameter.key}: enum なのに values が無い")
         for value in parameter.values:
             if not re.fullmatch(r"[a-z][a-z0-9_]*", value):
                 problems.append(f"{owner}.{parameter.key}: 値 {value} が snake_case でない")
-            if len(value) > GA4_VALUE_LIMIT:
-                problems.append(f"{owner}.{parameter.key}: 値 {value} が {GA4_VALUE_LIMIT} 字を超える")
+            if len(value) > value_limit:
+                problems.append(f"{owner}.{parameter.key}: 値 {value} が {value_limit} 字を超える")
     if parameter.type == "bucket" and not parameter.edges:
         problems.append(f"{owner}.{parameter.key}: bucket なのに edges が無い")
+    if parameter.type == "token":
+        problems += _validate_token(owner, parameter, value_limit=value_limit)
+    elif parameter.pattern or parameter.max_length:
+        problems.append(f"{owner}.{parameter.key}: pattern と max_length は token にだけ書ける")
+    return problems
+
+
+def _validate_token(owner: str, parameter: Parameter, *, value_limit: int) -> list[str]:
+    """token は自由な文字列ではない。**形を正規表現で閉じたものだけ**を通す。"""
+    problems: list[str] = []
+    where = f"{owner}.{parameter.key}"
+    if not parameter.pattern:
+        problems.append(f"{where}: token には pattern（値の全体が合う正規表現）が要る")
+        return problems
+    if '"""' in parameter.pattern or "\n" in parameter.pattern:
+        problems.append(f"{where}: pattern に改行や三重引用符は書けない")
+    try:
+        compiled = re.compile(parameter.pattern)
+    except re.error as error:
+        problems.append(f"{where}: pattern が正規表現として読めない（{error}）")
+        return problems
+    if compiled.fullmatch(""):
+        problems.append(f"{where}: pattern が空の文字列に合う。1 字以上を要求してください")
+    if parameter.max_length < 1 or parameter.max_length > value_limit:
+        problems.append(f"{where}: max_length は 1〜{value_limit}（{parameter.max_length}）")
+    return problems
+
+
+def _validate_first_party_name(name: str, *, what: str) -> list[str]:
+    problems: list[str] = []
+    if len(name) > FIRST_PARTY_NAME_LIMIT:
+        problems.append(f"{name}: {what}は {FIRST_PARTY_NAME_LIMIT} 字まで（first_party）")
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+        problems.append(f"{name}: {what}は snake_case（first_party）")
+    return problems
+
+
+def _validate_first_party_event(event: Event) -> list[str]:
+    problems = _validate_first_party_name(event.name, what="出来事の名前")
+    for parameter in event.parameters:
+        problems += [
+            f"{event.name}.{problem}"
+            for problem in _validate_first_party_name(parameter.key, what="引数の名前")
+        ]
+    counts = {
+        "次元（enum・flag・bucket）": (sum(p.type in DIMENSION_TYPES for p in event.parameters), FIRST_PARTY_DIMENSION_LIMIT),
+        "数（count・number）": (sum(p.type in NUMBER_TYPES for p in event.parameters), FIRST_PARTY_NUMBER_LIMIT),
+        "token": (sum(p.type == "token" for p in event.parameters), FIRST_PARTY_TOKEN_LIMIT),
+    }
+    for label, (count, limit) in counts.items():
+        if count > limit:
+            problems.append(f"{event.name}: {label}の引数が {count} 個（first_party の上限 {limit}）")
     return problems
 
 
@@ -446,11 +591,48 @@ def _render_events(schema: Schema) -> list[str]:
             lines.append("    }")
             lines.append("")
 
+    for event in schema.events:
+        for parameter in (p for p in event.parameters if p.type == "token"):
+            if parameter.swift_type_name in emitted:
+                continue
+            emitted.add(parameter.swift_type_name)
+            lines += _render_token(event, parameter)
+
     lines += _render_switch("name", schema.events, lambda e: f'"{e.name}"')
     lines += _render_switch("kind", schema.events, lambda e: f".{e.kind}", type_name="EventKind")
     lines += _render_switch("dedup", schema.events, lambda e: f".{e.dedup}", type_name="DedupScope")
     lines += _render_parameters(schema.events)
     lines.append("}")
+    return lines
+
+
+def _render_token(event: Event, parameter: Parameter) -> list[str]:
+    """形の決まった文字列の型。**作れたものだけが送れる**ので、発火点に検査を書かせない。"""
+    hashes = "#"
+    while f'"{hashes}' in parameter.pattern:
+        hashes += "#"
+    literal = f'{hashes}"{parameter.pattern}"{hashes}'
+    lines = [
+        f"    /// `{event.name}.{parameter.key}` の値。" + (parameter.description or ""),
+        "    ///",
+        f"    /// 値の全体が `{parameter.pattern}` に合い、{parameter.max_length} 字までのものだけを作れる。",
+        f"    public struct {parameter.swift_type_name}: Sendable, Hashable, CustomStringConvertible {{",
+        "",
+        "        public let rawValue: String",
+        "",
+        "        /// 形に合わなければ nil。**送らずに済ませる**（形を崩して送るより、送らない方が数を壊さない）。",
+        "        public init?(_ rawValue: String) {",
+        f"            guard rawValue.count <= {parameter.max_length},",
+        f"                  let pattern = try? Regex({literal}),",
+        "                  (try? pattern.wholeMatch(in: rawValue)) != nil",
+        "            else { return nil }",
+        "            self.rawValue = rawValue",
+        "        }",
+        "",
+        "        public var description: String { rawValue }",
+        "    }",
+        "",
+    ]
     return lines
 
 
@@ -468,6 +650,7 @@ def _swift_type(parameter: Parameter) -> str:
         "number": "Double",
         "flag": "Bool",
         "bucket": "Int",
+        "token": parameter.swift_type_name,
     }[parameter.type]
 
 
@@ -512,6 +695,7 @@ def _value_expression(parameter: Parameter) -> str:
         "number": f".number({key})",
         "flag": f".flag({key})",
         "bucket": f".bucket({key}, edges: {parameter.edges})",
+        "token": f".text({key}.rawValue)",
     }[parameter.type]
 
 
@@ -606,6 +790,75 @@ def _render_typed_entry_points(schema: Schema) -> list[str]:
         "}",
     ]
     return lines
+
+
+# ---------------------------------------------------------------- 受け口のための JSON
+
+def bucket_labels(edges: list[int]) -> list[str]:
+    """`AnalyticsValue.bucket(_:edges:)` が返しうる帯の名前の全部（同じ規則で作る）。"""
+    ordered = sorted(edges)
+    if not ordered:
+        return ["0"]
+    labels = [str(ordered[0] - 1)]
+    for index, lower in enumerate(ordered):
+        upper = ordered[index + 1] if index + 1 < len(ordered) else None
+        labels.append(f"{lower}_plus" if upper is None else f"{lower}_{upper - 1}")
+    return labels
+
+
+def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter: Parameter | None = None) -> dict:
+    shape: dict = {"type": type_}
+    if type_ == "enum":
+        shape["values"] = list(values)
+    elif type_ == "bucket":
+        shape["edges"] = sorted(edges)
+        shape["values"] = bucket_labels(edges)
+    elif type_ == "token" and parameter is not None:
+        shape["pattern"] = parameter.pattern
+        shape["maxLength"] = parameter.max_length
+    return shape
+
+
+def render_json(schema: Schema) -> str:
+    """受け口（サーバー）が照らし合わせに使うカタログ。形は SCHEMA.md の「--json の形」。"""
+    limits: dict = {"value": schema.value_limit}
+    if schema.dialect == "first_party":
+        limits.update({
+            "name": FIRST_PARTY_NAME_LIMIT,
+            "dimensions": FIRST_PARTY_DIMENSION_LIMIT,
+            "numbers": FIRST_PARTY_NUMBER_LIMIT,
+            "tokens": FIRST_PARTY_TOKEN_LIMIT,
+        })
+    else:
+        limits.update({"name": GA4_NAME_LIMIT, "parameters": GA4_PARAMETER_LIMIT})
+    document = {
+        "format": JSON_FORMAT,
+        "generator": "swift-analytics/Scripts/analytics-gen.py",
+        "catalogVersion": schema.version,
+        "dialect": schema.dialect,
+        "limits": limits,
+        "events": [
+            {
+                "name": event.name,
+                "kind": event.kind,
+                "dedup": event.dedup,
+                "parameters": [
+                    {"key": p.key, **_json_value_shape(p.type, p.values, p.edges, p)}
+                    for p in event.parameters
+                ],
+            }
+            for event in schema.events
+        ],
+        "userProperties": [
+            {"name": prop.name, **_json_value_shape(prop.type, prop.values, prop.edges)}
+            for prop in schema.properties
+        ],
+        "facts": [
+            {"name": fact.name, "source": fact.source, "query": fact.query}
+            for fact in schema.facts
+        ],
+    }
+    return json.dumps(document, ensure_ascii=False, indent=2) + "\n"
 
 
 # ---------------------------------------------------------------- 配線の監査
@@ -712,7 +965,8 @@ def main() -> int:
     for name in ("generate", "check"):
         p = sub.add_parser(name)
         p.add_argument("--schema", type=Path, required=True)
-        p.add_argument("--out", type=Path, required=True)
+        p.add_argument("--out", type=Path, help="書き出す Swift のファイル")
+        p.add_argument("--json", type=Path, help="受け口のための JSON のカタログ")
 
     p = sub.add_parser("audit")
     p.add_argument("--schema", type=Path, required=True)
@@ -726,23 +980,32 @@ def main() -> int:
         print(str(error), file=sys.stderr)
         return 1
 
-    if args.command == "generate":
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(render(schema), encoding="utf-8")
-        print(f"生成: {args.out}（出来事 {len(schema.events)} / 属性 {len(schema.properties)}）")
-        return 0
-
-    if args.command == "check":
-        expected = render(schema)
-        actual = args.out.read_text(encoding="utf-8") if args.out.exists() else ""
-        if expected != actual:
+    if args.command in ("generate", "check"):
+        outputs = [(path, renderer) for path, renderer in ((args.out, render), (args.json, render_json)) if path]
+        if not outputs:
+            print("--out と --json の少なくとも一方が要ります", file=sys.stderr)
+            return 2
+        if args.command == "generate":
+            for path, renderer in outputs:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(renderer(schema), encoding="utf-8")
+                print(f"生成: {path}（出来事 {len(schema.events)} / 属性 {len(schema.properties)}）")
+            return 0
+        stale = [
+            path for path, renderer in outputs
+            if renderer(schema) != (path.read_text(encoding="utf-8") if path.exists() else "")
+        ]
+        if stale:
+            flags = " ".join(f"{flag} {path}" for flag, path in (("--out", args.out), ("--json", args.json)) if path)
+            for path in stale:
+                print(f"生成物がスキーマとずれています: {path}", file=sys.stderr)
             print(
-                f"生成物がスキーマとずれています: {args.out}\n"
-                f"  analytics-gen.py generate --schema {args.schema} --out {args.out} を実行してコミットしてください",
+                f"  analytics-gen.py generate --schema {args.schema} {flags} を実行してコミットしてください",
                 file=sys.stderr,
             )
             return 1
-        print(f"生成物は最新です: {args.out}")
+        for path, _ in outputs:
+            print(f"生成物は最新です: {path}")
         return 0
 
     problems = audit(schema, args.sources)
