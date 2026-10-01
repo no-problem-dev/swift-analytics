@@ -24,8 +24,7 @@ When the parameters matter too, ``RecordingAnalytics/lines`` renders each event 
 `name key=value key=value` with the keys sorted, which makes the expectation stable across runs —
 dictionary order is not.
 
-``RecordingAnalytics`` is a class marked `@unchecked Sendable`; its two mutable arrays are guarded
-by a lock, so it is safe to hand to code running on another task. ``RecordingAnalytics/reset()``
+``RecordingAnalytics`` is a `Sendable` class whose two records live inside a lock that owns them, so it is safe to hand to code running on another task. ``RecordingAnalytics/reset()``
 clears both, which lets one instance serve several phases of a longer test.
 
 To pin the deduplication behaviour of `DedupingAnalytics` itself, give it a `UserDefaults` suite of

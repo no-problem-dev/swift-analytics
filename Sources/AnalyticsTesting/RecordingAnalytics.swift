@@ -1,5 +1,6 @@
 import AnalyticsCore
 import Foundation
+import os
 
 /// A test double that only remembers what it was asked to send.
 ///
@@ -17,21 +18,21 @@ import Foundation
 /// // ... interact ...
 /// #expect(analytics.names == ["tutorial_begin", "tutorial_complete"])
 /// ```
-public final class RecordingAnalytics: AnalyticsClient, @unchecked Sendable {
+public final class RecordingAnalytics: AnalyticsClient, Sendable {
 
-    /// Guards the records. These two pieces of mutable state are why `Sendable` is vouched for by
-    /// hand here, and nothing outside this file reaches them.
-    private let lock = NSLock()
-    private var storedEvents: [any AnalyticsEvent] = []
-    private var storedProperties: [any AnalyticsUserProperty] = []
+    /// The records, behind a lock that owns them, so `Sendable` is checked by the compiler.
+    private let records = OSAllocatedUnfairLock(initialState: Records())
+
+    private struct Records: Sendable {
+        var events: [any AnalyticsEvent] = []
+        var properties: [any AnalyticsUserProperty] = []
+    }
 
     public init() {}
 
     /// Everything that was sent, in the order it was sent.
     public var events: [any AnalyticsEvent] {
-        lock.lock()
-        defer { lock.unlock() }
-        return storedEvents
+        records.withLock { $0.events }
     }
 
     /// The names of what was sent, in order. **Repeats are left in.**
@@ -48,9 +49,7 @@ public final class RecordingAnalytics: AnalyticsClient, @unchecked Sendable {
 
     /// Every property that was set, in the order it was set, repeats included.
     public var properties: [any AnalyticsUserProperty] {
-        lock.lock()
-        defer { lock.unlock() }
-        return storedProperties
+        records.withLock { $0.properties }
     }
 
     /// One line per property, in the form `name=value`.
@@ -64,22 +63,15 @@ public final class RecordingAnalytics: AnalyticsClient, @unchecked Sendable {
     }
 
     public func track(_ event: any AnalyticsEvent) {
-        lock.lock()
-        defer { lock.unlock() }
-        storedEvents.append(event)
+        records.withLock { $0.events.append(event) }
     }
 
     public func setUserProperty(_ property: any AnalyticsUserProperty) {
-        lock.lock()
-        defer { lock.unlock() }
-        storedProperties.append(property)
+        records.withLock { $0.properties.append(property) }
     }
 
     /// Throws away both records, for separating one phase from the next within a single test.
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        storedEvents.removeAll()
-        storedProperties.removeAll()
+        records.withLock { $0 = Records() }
     }
 }

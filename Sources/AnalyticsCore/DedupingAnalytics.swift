@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Applies the catalog's counting rule before forwarding, so no firing point has to ask whether
 /// it already fired.
@@ -33,17 +34,23 @@ import Foundation
 /// User properties (``AnalyticsUserProperty``) are never thinned out. A property is current
 /// state, so setting the same value again changes nothing, and dropping the repeat would leave a
 /// stale value in place after a restore.
-public final class DedupingAnalytics: AnalyticsClient, @unchecked Sendable {
+public final class DedupingAnalytics: AnalyticsClient, Sendable {
 
     private let wrapped: any AnalyticsClient
-    private let defaults: UserDefaults
 
-    /// Guards the session set, and keeps the install flag's read-then-write from interleaving.
+    /// Where the install flags live.
     ///
-    /// This one piece of mutable state is why `Sendable` is vouched for by hand here, and
-    /// ``track(_:)`` is the only path that reaches it.
-    private let lock = NSLock()
-    private var firedThisSession: Set<String> = []
+    /// `UserDefaults` is documented as thread-safe but this SDK does not mark it `Sendable`, so
+    /// this one property opts out of the check — the type as a whole does not.
+    nonisolated(unsafe) private let defaults: UserDefaults
+
+    /// The session set, behind a lock that owns it, so `Sendable` is checked by the compiler
+    /// rather than vouched for by hand. (`Mutex` would say the same, but needs iOS 18 and
+    /// macOS 15, above this package's floor.)
+    private let firedThisSession = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+
+    /// Keeps the install flag's read-then-write from interleaving.
+    private let installFlags = OSAllocatedUnfairLock()
 
     /// - Parameters:
     ///   - wrapped: Where the occurrences that survive are actually sent
@@ -68,13 +75,12 @@ public final class DedupingAnalytics: AnalyticsClient, @unchecked Sendable {
         case .always:
             return true
         case .session:
-            lock.lock()
-            defer { lock.unlock() }
-            return firedThisSession.insert(event.dedupKey).inserted
+            let key = event.dedupKey
+            return firedThisSession.withLock { $0.insert(key).inserted }
         case .install:
             let key = Self.installKey(for: event.dedupKey)
-            lock.lock()
-            defer { lock.unlock() }
+            installFlags.lock()
+            defer { installFlags.unlock() }
             guard !defaults.bool(forKey: key) else { return false }
             defaults.set(true, forKey: key)
             return true
