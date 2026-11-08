@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-08
+
 Fixes asked for by the apps that started on 0.3.0 (kotoakari, stock-radar, jibun-bgm, kokoiine,
 gamification_app). Nothing a 0.3.0 app wrote stops compiling; regenerate the catalog after
 upgrading, since the common catalog is now version 2 and `check` will say the outputs are stale.
