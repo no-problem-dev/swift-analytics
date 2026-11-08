@@ -4,7 +4,9 @@
 #
 # 決まり:
 # - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）。
-#   FirstOpenKind 以外の enum は足せる。FirstOpenKind は AnalyticsCore が送る値なので足せない
+#   共通の enum はどれも足せる。FirstOpenKind に足した値は FirstLaunch.recordLaunch(sendingTo:…, kind:) で送る
+#   （受ける側は `fresh` だけを新規と読むので、足した値で新規の数は変わらない）
+# - bucket の引数は、アプリが `extend:` の `labels:` で帯の名前を決められる（edges は変えられない）
 # - 引数はアプリが足してよい（共通の引数は消せない・型は変えられない）
 # - `optional: true` の引数は値が無いことがある。生成物は Optional で、nil なら props に載らない
 # - 時刻・人・アプリの版などは封筒（Envelope）が持つ。出来事の引数に入れない
@@ -27,8 +29,9 @@ events:
       kind:
         type: enum
         type_name: FirstOpenKind
+        extensible: true
         values: [fresh, upgraded]
-        description: fresh = 新しく入れた・upgraded = 前の版から更新して初めて今の計測で起動した
+        description: fresh = 新しく入れた・upgraded = 前の版から更新して初めて今の計測で起動した。受ける側は fresh だけを新規と読む
 
   - name: internal_device
     kind: outcome

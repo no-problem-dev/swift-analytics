@@ -29,7 +29,7 @@
             "fresh",
             "upgraded"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]

@@ -45,7 +45,7 @@ export const EVENTS = {
   first_open: {
     kind: "outcome", dedup: "install", origin: "common", sentBy: "package",
     parameters: {
-      kind: { type: "enum", origin: "common", values: FirstOpenKind, extensible: false },
+      kind: { type: "enum", origin: "common", values: FirstOpenKind, extensible: true },
     },
   },
   internal_device: {

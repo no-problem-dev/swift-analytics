@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- `OccurrenceCount.adopt(_:count:defaults:)` carries over a count the app kept itself before it used
+  this type, once per key. The note that it ran survives `reset` and `resetAll`, so a forgotten
+  install does not get the old count back
+- `FirstLaunch.recordLaunch(sendingTo:hasPriorData:sentBefore:defaults:now:kind:)` lets the app decide
+  the value of `first_open.kind` from the package's judgment (`fresh` / `upgraded`), for apps that
+  added their own values (`existing`)
+- `extend:` can set `labels:` on a common `bucket` parameter (`paywall_shown.nth` sent as `1`…`10`, `10+`).
+  `edges` stay as the common catalog has them
+
+### Changed
+
+- `FirstOpenKind` in the common catalog is `extensible: true`, so every common enum takes app values.
+  Receivers read only `fresh` as a new install (ENVELOPE.md, SCHEMA.md)
+
 ## [0.3.5] - 2026-11-08
 
 ### Fixed

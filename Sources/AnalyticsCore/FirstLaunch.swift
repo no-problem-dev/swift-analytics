@@ -52,6 +52,44 @@ public enum FirstLaunch {
         return kind
     }
 
+    /// The same as ``recordLaunch(sendingTo:hasPriorData:sentBefore:defaults:now:)``, but the app
+    /// decides the value of `first_open.kind`, for an app that added its own values to
+    /// `FirstOpenKind` in its catalog (`extend:`).
+    ///
+    /// `kind` is called once, only when `first_open` is about to be sent, with the kind the package
+    /// would send. Return it as it is (`$0.rawValue`) or one of the app's values (`"existing"` for
+    /// an install that used this version before measurement arrived). Receivers read `fresh` as a
+    /// new install, so return `fresh` only for one.
+    ///
+    /// ```swift
+    /// FirstLaunch.recordLaunch(sendingTo: analytics, sentBefore: sentByOldKey) { suggested in
+    ///     usedThisVersionBefore ? "existing" : suggested.rawValue
+    /// }
+    /// ```
+    ///
+    /// - Returns: The value sent this time, or `nil` when `first_open` had been sent before
+    @discardableResult
+    public static func recordLaunch(
+        sendingTo analytics: any AnalyticsClient,
+        hasPriorData: Bool = false,
+        sentBefore: Bool = false,
+        defaults: UserDefaults = .standard,
+        now: Date = Date(),
+        kind: (FirstOpenKind) -> String
+    ) -> String? {
+        let wasStamped = defaults.object(forKey: key) != nil
+        if !wasStamped {
+            defaults.set(now.timeIntervalSince1970, forKey: key)
+        }
+        guard !defaults.bool(forKey: openKey) else { return nil }
+        defaults.set(true, forKey: openKey)
+        guard !sentBefore else { return nil }
+        let suggested: FirstOpenKind = (wasStamped || hasPriorData) ? .upgraded : .fresh
+        let value = kind(suggested)
+        analytics.track(FirstOpenEvent(value: value))
+        return value
+    }
+
     /// Whole days elapsed since the first launch, counting the first 24 hours as day 0.
     ///
     /// With nothing stamped it answers 0, treating an unknown device as being on its first day,
@@ -68,4 +106,16 @@ public enum FirstLaunch {
         defaults.removeObject(forKey: key)
         defaults.removeObject(forKey: openKey)
     }
+}
+
+/// `first_open` with a `kind` the app chose (``FirstLaunch/recordLaunch(sendingTo:hasPriorData:sentBefore:defaults:now:kind:)``).
+/// Sent the same way as ``CommonEvent/firstOpen(kind:)``.
+struct FirstOpenEvent: AnalyticsEvent, Equatable {
+    /// The value of `first_open.kind`.
+    let value: String
+
+    var name: String { CommonEvent.firstOpen(kind: .fresh).name }
+    var parameters: [String: AnalyticsValue] { ["kind": .text(value)] }
+    var kind: EventKind { .outcome }
+    var dedup: DedupScope { .install }
 }
