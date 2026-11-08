@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import sys
@@ -1433,7 +1434,7 @@ def audit(schema: Schema, roots: list[Path]) -> list[str]:
     # 出来事を作る所と送る所は離れていることがある（`send { .paywallShown(source: $0) }`・作って返す関数）
     for event in schema.app_fired_events:
         # 共通の出来事は、アプリにその場面が無ければ撃たなくてよい（unfired_common が知らせるだけ）
-        if event.origin == "app" and not _mentions(files, event.case):
+        if event.origin == "app" and not _mentions(files, event.case, schema.event_type):
             problems.append(f"{event.name}（.{event.case}）を撃っている場所が無い")
 
     problems += _audit_enum_values(schema, files)
@@ -1479,6 +1480,10 @@ def _audit_enum_values(schema: Schema, files: list[tuple[Path, str]]) -> list[st
     - 値はその出来事を作る式（`.paywallShown(…)` の括弧の中）と、その型を返す関数・計算プロパティ
       （`var analyticsScreen: ScreenName { switch self { case .room: .room … } }`）が返す値で探す。
       ほかの出来事や属性に同じ名前の値があっても数えない
+    - ほかに、型の付いた所に書いた値も数える（`_typed_values`）: 型名で書いた値（`static let area = AppEvent.Area.invite`）・
+      その型の変数の初期値と代入（`var result: T = .cancelled` / `result = .completed`）。
+      その型の引数を取る関数（`func noteEntry(_ entry: T)`・出来事と同じ名前の View の modifier）へ渡した値も数える（`_forwarded_arguments`）
+    - `T(rawValue:)` で作る型は見ない。外の文字列から作るので、どの値も送りうる
     """
     common_types = {
         p.swift_type_name for e in schema.events if e.origin != "app" for p in e.parameters
@@ -1504,13 +1509,23 @@ def _audit_enum_values(schema: Schema, files: list[tuple[Path, str]]) -> list[st
                 users[name].append(where)
 
     problems: list[str] = []
+    texts = [(path, _strip_line_comments(text)) for path, text in files]
     for name, values in expected.items():
         if not values:
             continue
+        ref = _type_ref(texts, schema.event_type, name)
+        # 外から来た文字列で作る値（`T(rawValue: code) ?? .other`）は、どの値にもなりうる。静的には確かめられないので見ない
+        if _built_from_raw_value(texts, ref, name):
+            continue
         cases = {e.case for e in schema.app_fired_events
                  if any(p.type == "enum" and p.swift_type_name == name for p in e.parameters)}
-        own = "\n".join(_constructions(files, cases) + _mapping_results(files, name))
-        literal = [v for v in values if re.search(rf"\.{lower_camel(v)}\b", own)]
+        own = "\n".join(
+            _constructions(texts, cases, schema.event_type)
+            + _mapping_results(texts, name)
+            + _typed_values(texts, ref, name)
+            + _forwarded_arguments(texts, ref, name)
+        )
+        literal = [v for v in values if re.search(rf"\.`?{lower_camel(v)}`?(?!\w)", own)]
         if not literal:
             continue
         for value in values:
@@ -1524,7 +1539,7 @@ def unfired_common(schema: Schema, roots: list[Path]) -> list[str]:
     files = _source_texts(roots)
     return [
         event.name for event in schema.app_fired_events
-        if event.origin != "app" and not _mentions(files, event.case)
+        if event.origin != "app" and not _mentions(files, event.case, schema.event_type)
     ]
 
 
@@ -1562,24 +1577,60 @@ def _source_texts(roots: list[Path]) -> list[tuple[Path, str]]:
     return files
 
 
-def _mentions(files: list[tuple[Path, str]], case: str) -> bool:
-    """`.case` がどこかに書かれているか（コメントは除く）。"""
-    pattern = re.compile(rf"\.{case}\b")
-    return any(pattern.search(_strip_line_comments(text)) for _, text in files)
+def _mentions(files: list[tuple[Path, str]], case: str, event_type: str = "") -> bool:
+    """出来事 `.case` を作る所がどこかに書かれているか（コメントは除く）。
+
+    出来事と同じ名前の関数（`func errorShown(_ area:…) -> some View` の modifier）がアプリにあると、
+    `.errorShown(…)` はその関数を呼んでいるだけで、出来事を作っていない。そのときは
+    型名から書いた `AppEvent.errorShown`・送る口に直に渡した `track(.errorShown(…))` だけを数える。
+    """
+    texts = [_strip_line_comments(text) for _, text in files]
+    if event_type and _shadowed(texts, case):
+        pattern = re.compile(rf"(?:\b{re.escape(event_type)}|\b(?:{'|'.join(ENTRY_POINTS)})\(\s*)\.{case}\b")
+    else:
+        pattern = re.compile(rf"\.{case}\b")
+    return any(pattern.search(text) for text in texts)
 
 
+def _shadowed(texts: list[str], case: str) -> bool:
+    """`case` と同じ名前の関数がアプリのソースで宣言されているか。"""
+    return any(case in (name for name, _ in _declarations(text)) for text in texts)
+
+
+@functools.lru_cache(maxsize=None)
+def _declarations(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """ファイルの中の関数と init の宣言（名前・引数を 1 つずつ）。init の名前は空。コメントを除いた文で渡す。"""
+    found: list[tuple[str, tuple[str, ...]]] = []
+    for match in re.finditer(r"\b(?:func\s+(\w+)|init)\s*(?:<[^>]*>)?\s*\(", text):
+        params = _balanced(text, match.end() - 1)
+        if params is not None:
+            found.append((match.group(1) or "", tuple(part.strip() for part in _split_top_level(params))))
+    return tuple(found)
+
+
+@functools.lru_cache(maxsize=None)
 def _strip_line_comments(text: str) -> str:
     return re.sub(r"//[^\n]*", "", text)
 
 
-def _constructions(files: list[tuple[Path, str]], cases: set[str]) -> list[str]:
-    """出来事を作る式 `.case(…)` の括弧の中（空白を詰めたもの）。どこに書かれていても拾う。"""
+def _constructions(files: list[tuple[Path, str]], cases: set[str], event_type: str = "") -> list[str]:
+    """出来事を作る式 `.case(…)` の括弧の中（空白を詰めたもの）。どこに書かれていても拾う。
+
+    出来事と同じ名前の関数があれば、その関数の呼び出しは出来事を作る所に数えない（`_mentions` と同じ扱い）。
+    その関数がこの型の引数を取るなら、渡した値は `_forwarded_arguments` が数える。
+    """
     if not cases:
         return []
-    pattern = re.compile(rf"\.({'|'.join(sorted(map(re.escape, cases)))})\(")
+    texts = [_strip_line_comments(text) for _, text in files]
+    shadowed = {case for case in cases if event_type and _shadowed(texts, case)}
+    plain = sorted(map(re.escape, cases - shadowed))
+    alternatives = [rf"\.({'|'.join(plain)})\("] if plain else []
+    if shadowed:
+        names = "|".join(sorted(map(re.escape, shadowed)))
+        alternatives.append(rf"(?:\b{re.escape(event_type)}|\b(?:{'|'.join(ENTRY_POINTS)})\(\s*)\.({names})\(")
+    pattern = re.compile("|".join(alternatives))
     bodies: list[str] = []
-    for _, text in files:
-        text = _strip_line_comments(text)
+    for text in texts:
         for match in pattern.finditer(text):
             body = _balanced(text, match.end() - 1)
             if body is not None:
@@ -1587,23 +1638,190 @@ def _constructions(files: list[tuple[Path, str]], cases: set[str]) -> list[str]:
     return bodies
 
 
+# switch の case の左側（`case .room:`・`case let .x(y) where y > 1:`・`default:`）。右側だけを返す値として残すために消す。
+# `guard case let .skip(r) = decision else {…}` / `if case .x = y` は代入の `=` があるので case の左側ではない（消すと先の値まで消える）
+SWITCH_LABEL = re.compile(r"\b(?:case\b(?:[^:{}=!<>]|[=!<>]=|[<>])*|default\s*):")
+
+
+def _type_ref(files: list[tuple[Path, str]], event_type: str, type_name: str) -> str:
+    """生成した入れ子の型の名前（`AppEvent.Area`・`AppEvents.AppEvent.Area`）。
+
+    生成した型は出来事の型の中にあるので、外からは `AppEvent.Area` と書く。裸の `Area` はアプリの別の型
+    （`Domain.DueChoice`）のことがあるので、`typealias Area = AppEvent.Area` があるときだけ数える。
+    """
+    qualified = rf"(?<![\w.])(?:\w+\.)*{re.escape(event_type)}\.{re.escape(type_name)}(?!\w)"
+    alias = re.compile(rf"\btypealias\s+{re.escape(type_name)}\s*=\s*(?:\w+\.)*{re.escape(event_type)}\.{re.escape(type_name)}\b")
+    if any(type_name in text and alias.search(text) for _, text in files):
+        return rf"(?:{qualified}|(?<![\w.]){re.escape(type_name)}(?!\w))"
+    return qualified
+
+
 def _mapping_results(files: list[tuple[Path, str]], type_name: str) -> list[str]:
     """`type_name` を返す関数・計算プロパティ（`-> ScreenName {`・`var x: TsumofuEvent.ScreenName {`）が返す値。
 
+    返す型が Optional（`-> T? {`）でも、タプルの 1 つ（`-> (area: T, kind: U)? {`）でも拾う。
     アプリの値から写す switch の、各 case の右側（と `return`）だけを残す。`case .room:` の側はアプリの型の値で、
     計測の値ではないので数えない。
     """
-    pattern = re.compile(rf"(?:->|\bvar\s+\w+\s*:)\s*(?:[\w.]+\.)?{re.escape(type_name)}\s*\{{")
+    name = re.escape(type_name)
+    pattern = re.compile(
+        rf"(?:->|\bvar\s+\w+\s*:)\s*(?:(?:[\w.]+\.)?{name}\??|\([^(){{}}]*(?<![\w.])(?:[\w]+\.)*{name}\b[^(){{}}]*\)\??)\s*\{{"
+    )
     results: list[str] = []
     for _, text in files:
+        if type_name not in text:
+            continue
         text = _strip_line_comments(text)
         for match in pattern.finditer(text):
             body = _balanced(text, match.end() - 1, "{", "}")
             if body is None:
                 continue
-            body = re.sub(r"\b(?:case\b[^:]*|default\s*):", " ", body)
+            body = SWITCH_LABEL.sub(" ", body)
             results.append(re.sub(r"\s+", " ", body))
     return results
+
+
+def _built_from_raw_value(files: list[tuple[Path, str]], ref: str, type_name: str) -> bool:
+    """`T(rawValue: x)`・`T.init(rawValue: x)`・`T` を返す関数や `extension T` の中の `Self(rawValue:)`/`.init(rawValue:)` があるか。"""
+    direct = re.compile(rf"{ref}(?:\.init)?\s*\(\s*rawValue\s*:")
+    if any(direct.search(_strip_line_comments(text)) for _, text in files if type_name in text):
+        return True
+    bodies = _mapping_results(files, type_name) + _extension_bodies(files, ref, type_name)
+    return any(re.search(r"(?:\bSelf|\.init)\s*\(\s*rawValue\s*:", body) for body in bodies)
+
+
+def _extension_bodies(files: list[tuple[Path, str]], ref: str, type_name: str) -> list[str]:
+    """`extension AppEvent.DueChoice { init(_ due: Domain.DueChoice) { self = switch due { case .tonight: .tonight … } } }` の中身。
+
+    その型を広げる所に書いた値はその型の値なので数える。switch の case の左側（写す元の値）は消す。
+    """
+    pattern = re.compile(rf"\bextension\s+{ref}\s*(?::[^{{]*)?\{{")
+    bodies: list[str] = []
+    for _, text in files:
+        if type_name not in text:
+            continue
+        text = _strip_line_comments(text)
+        for match in pattern.finditer(text):
+            body = _balanced(text, match.end() - 1, "{", "}")
+            if body is not None:
+                bodies.append(re.sub(r"\s+", " ", SWITCH_LABEL.sub(" ", body)))
+    return bodies
+
+
+def _typed_values(files: list[tuple[Path, str]], ref: str, type_name: str) -> list[str]:
+    """型の付いた所に書いた値。
+
+    - 型名から書いた値: `static let area = AppEvent.Area.invite`（`.invite` として返す）
+    - その型の変数の初期値: `var result: T = .cancelled`・`let v: T = switch x { case .a: .b }`・`= c ? .a : .b`
+    - その変数への代入: 宣言したファイルの中の `result = .completed`・どのファイルでもメンバーとして書いた `visit.reader = .serverAi`
+    - その型を広げる所（`extension T { … }`）に書いた値
+    """
+    qualified = re.compile(rf"{ref}\.(`?\w+`?)")
+    declared = re.compile(rf"\b(?:var|let)\s+(\w+)\s*:\s*{ref}\??\s*(?:=(?!=)|[{{\n;])")
+    results: list[str] = _extension_bodies(files, ref, type_name)
+    members: set[str] = set()
+    texts = [_strip_line_comments(text) for _, text in files]
+    for text in texts:
+        if type_name not in text:
+            continue
+        results += [f".{m.group(1)}" for m in qualified.finditer(text)]
+        names: set[str] = set()
+        for match in declared.finditer(text):
+            names.add(match.group(1))
+            if text[match.end() - 1] == "=":
+                results.append(_right_hand_side(text, match.end()))
+        members |= names
+        for name in names:
+            for match in re.finditer(rf"(?<![\w.])(?:self\.)?{re.escape(name)}\s*=(?!=)", text):
+                results.append(_right_hand_side(text, match.end()))
+    if members:
+        member = re.compile(rf"(?<=[\w)\]?!])\.({'|'.join(sorted(map(re.escape, members)))})\s*=(?!=)")
+        for text in texts:
+            for match in member.finditer(text):
+                if not re.match(r"self\b", text[max(0, match.start() - 4):match.start()]):
+                    results.append(_right_hand_side(text, match.end()))
+    return results
+
+
+def _right_hand_side(text: str, start: int) -> str:
+    """`=` の右側。`switch`/`if` の式なら続く `{…}` を（case の左側を消して）、そうでなければ行の終わりまで。"""
+    line_end = text.find("\n", start)
+    line = text[start:] if line_end < 0 else text[start:line_end]
+    if re.match(r"\s*(?:switch|if)\b", line):
+        brace = text.find("{", start)
+        body = _balanced(text, brace, "{", "}") if brace >= 0 else None
+        if body is not None:
+            return SWITCH_LABEL.sub(" ", body)
+    return line
+
+
+def _forwarded_arguments(files: list[tuple[Path, str]], ref: str, type_name: str) -> list[str]:
+    """その型を受け取る所へ、呼び出す所で渡した値。受け取った値は出来事に詰めて送る、とみなす。
+
+    - その型の引数を取る関数（`func noteEntry(_ entry: T)`・`func errorShown(_ area: T, …) -> some View`）と、
+      その型を受け取るクロージャの変数（`var cardFinished: (T) -> Void`）の呼び出しの括弧の中
+    - その型の引数のラベルと、その型の保存プロパティの名前（memberwise init のラベル）に付けて渡した値
+      （`PaywallView(source: .receiptLimit)`・`headline(for: .teaser)`）
+    """
+    texts = [_strip_line_comments(text) for _, text in files]
+    param = re.compile(rf"^(?:(\w+)\s+)?(\w+)\s*:\s*(?:inout\s+|@\w+\s+)*{ref}\??\s*(?:=|$)")
+    closure = re.compile(rf"\b(?:var|let)\s+(\w+)\s*:\s*(?:@\w+\s+)*\(\s*{ref}\??\s*\)\s*(?:async\s*)?(?:throws\s*)?->")
+    stored = re.compile(rf"\b(?:var|let)\s+(\w+)\s*:\s*{ref}\??(?![\w.<\[])")
+    names: set[str] = set()
+    labels: set[str] = set()
+    for text in texts:
+        if type_name not in text:
+            continue
+        for function, params in _declarations(text):
+            for part in params:
+                if type_name not in part:
+                    continue
+                found = param.search(part)
+                if not found:
+                    continue
+                if function:
+                    names.add(function)
+                label = found.group(1) or found.group(2)
+                if label != "_":
+                    labels.add(label)
+        names.update(m.group(1) for m in closure.finditer(text))
+        labels.update(m.group(1) for m in stored.finditer(text))
+    bodies: list[str] = []
+    if names:
+        call = re.compile(rf"(?<!\w)({'|'.join(sorted(map(re.escape, names)))})\s*\(")
+        for text in texts:
+            if not any(name in text for name in names):
+                continue
+            for match in call.finditer(text):
+                if re.search(r"\bfunc\s*$", text[max(0, match.start() - 8):match.start()]):
+                    continue
+                body = _balanced(text, match.end() - 1)
+                if body is not None:
+                    bodies.append(re.sub(r"\s+", "", body))
+    if labels:
+        labelled = re.compile(rf"(?<![\w.])(?:{'|'.join(sorted(map(re.escape, labels)))})\s*:\s*(\.`?\w+`?)")
+        for text in texts:
+            bodies += [m.group(1) for m in labelled.finditer(text)]
+    return bodies
+
+
+def _split_top_level(params: str) -> list[str]:
+    """引数の並び（括弧の中）を、入れ子の括弧の外のカンマで分ける。"""
+    parts: list[str] = []
+    depth = 0
+    current = ""
+    for char in params:
+        if char in "([<{":
+            depth += 1
+        elif char in ")]>}":
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+    parts.append(current)
+    return parts
 
 
 def _collect_sites(files: list[tuple[Path, str]]) -> list[tuple[str, str, str]]:

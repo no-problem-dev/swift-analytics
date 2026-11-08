@@ -1060,5 +1060,160 @@ class AuditMappingSwitch(unittest.TestCase):
         self.assertEqual(problems, ["ScreenName.diary を撃っている場所が無い（screen_viewed.screen・tapped.screen のどれからも）"])
 
 
+class AuditTypedValues(unittest.TestCase):
+    """出来事の式の外で、型の付いた所に書いた値を撃っている値として数える（ここいいねで読み違えた形）。"""
+
+    def schema(self):
+        return app("""\
+            events:
+              - name: error_shown
+                kind: impression
+                dedup: always
+                parameters:
+                  area: { type: enum, values: [sync, consult, import, invite] }
+              - name: blocked
+                kind: outcome
+                dedup: always
+                parameters:
+                  by: { type: enum, type_name: BlockedBy, values: [none, offline, other] }
+              - name: answer_finished
+                kind: outcome
+                dedup: always
+                parameters:
+                  result: { type: enum, type_name: AnswerResult, values: [completed, cancelled, failed] }
+        """)
+
+    BASE = """
+        analytics.track(AppEvent.blocked(by: .offline))
+        analytics.track(AppEvent.answerFinished(result: answer.result))
+        analytics.trackImpression(AppEvent.errorShown(area: .consult))
+    """
+
+    def problems(self, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            return gen.audit(self.schema(), write_sources(directory, self.BASE + text))
+
+    WIRED = """
+        func blockedBy(_ decision: Decision) -> AppEvent.BlockedBy {
+            guard case let .skip(reason) = decision else { return AppEvent.BlockedBy.none }
+            return reason.isOffline ? .offline : .other
+        }
+        final class Answer {
+            var result: AppEvent.AnswerResult = .cancelled
+            func receive(_ event: Event) {
+                switch event {
+                case .done: result = .completed
+                case .failed: result = .failed
+                }
+            }
+        }
+        enum ImportTelemetry { static let area = AppEvent.Area.import }
+        func noteArea(_ area: AppEvent.Area) { pending = area }
+        noteArea(.sync)
+        let inviteArea: AppEvent.Area = .invite
+    """
+
+    def test_values_written_where_the_type_is_known_count(self):
+        self.assertEqual(self.problems(self.WIRED), [])
+
+    def test_a_value_after_guard_case_is_not_cut(self):
+        problems = self.problems(self.WIRED.replace("return AppEvent.BlockedBy.none", "return .other"))
+        self.assertEqual(problems, ["BlockedBy.none を撃っている場所が無い（blocked.by のどれからも）"])
+
+    def test_a_missing_value_is_still_reported(self):
+        problems = self.problems(self.WIRED.replace("noteArea(.sync)", ""))
+        self.assertEqual(problems, ["Area.sync を撃っている場所が無い（error_shown.area のどれからも）"])
+
+    def test_member_assignment_in_another_file_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write_sources(directory, self.BASE + self.WIRED.replace("case .failed: result = .failed", ""))
+            roots = write_sources(directory, "answer.result = .failed\n", name="Other.swift")
+            self.assertEqual(gen.audit(self.schema(), roots), [])
+
+    def test_an_app_type_with_the_same_name_does_not_count(self):
+        problems = self.problems(self.WIRED + """
+            enum Area { case transit, sync }
+            func pick(_ area: Area) {}
+            let fallback: Area = .transit
+            let other = Area.sync
+        """.replace("noteArea(.sync)", ""))
+        self.assertEqual(problems, [])
+        problems = self.problems(self.WIRED.replace("noteArea(.sync)", "") + """
+            enum Area { case sync }
+            let other = Area.sync
+        """)
+        self.assertEqual(problems, ["Area.sync を撃っている場所が無い（error_shown.area のどれからも）"])
+
+    def test_labels_of_typed_properties_and_extension_bodies_count(self):
+        problems = self.problems(self.WIRED.replace("noteArea(.sync)", "").replace("let inviteArea: AppEvent.Area = .invite", "") + """
+            struct Banner: View { let area: AppEvent.Area }
+            Banner(area: .sync)
+            extension AppEvent.Area {
+                init(_ place: Domain.Place) {
+                    self = switch place {
+                    case .home: .invite
+                    }
+                }
+            }
+        """)
+        self.assertEqual(problems, [])
+
+    def test_raw_value_types_are_not_checked(self):
+        problems = self.problems("""
+            func blockedBy(_ code: String) -> AppEvent.BlockedBy {
+                AppEvent.BlockedBy(rawValue: code) ?? .other
+            }
+            func answer(_ code: String) -> AppEvent.AnswerResult { Self(rawValue: code) ?? .failed }
+            noteArea(.sync)
+            func noteArea(_ area: AppEvent.Area) {}
+        """)
+        self.assertEqual(problems, [
+            "Area.import を撃っている場所が無い（error_shown.area のどれからも）",
+            "Area.invite を撃っている場所が無い（error_shown.area のどれからも）",
+        ])
+
+
+class AuditSameNamedModifier(unittest.TestCase):
+    """出来事と同じ名前の View の modifier は、出来事を作る所ではない。渡した値は数える。"""
+
+    def schema(self):
+        return app("""\
+            events:
+              - name: error_shown
+                kind: impression
+                dedup: always
+                parameters:
+                  area: { type: enum, values: [sync, consult] }
+        """)
+
+    MODIFIER = """
+        extension View {
+            public func errorShown(_ area: AppEvent.Area) -> some View { modifier(ErrorShown(area: area)) }
+        }
+        Text(message).errorShown(.consult)
+        Text(message).errorShown(.sync)
+    """
+
+    def test_modifier_calls_alone_do_not_fire_the_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            problems = gen.audit(self.schema(), write_sources(directory, self.MODIFIER))
+        self.assertEqual(problems, ["error_shown（.errorShown）を撃っている場所が無い"])
+
+    def test_values_passed_to_the_modifier_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, self.MODIFIER + """
+                content.task { analytics.trackImpression(AppEvent.errorShown(area: area)) }
+            """)
+            self.assertEqual(gen.audit(self.schema(), roots), [])
+
+    def test_a_value_missing_from_the_modifier_calls_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, self.MODIFIER.replace("Text(message).errorShown(.sync)", "") + """
+                content.task { analytics.trackImpression(.errorShown(area: area)) }
+            """)
+            problems = gen.audit(self.schema(), roots)
+        self.assertEqual(problems, ["Area.sync を撃っている場所が無い（error_shown.area のどれからも）"])
+
+
 if __name__ == "__main__":
     unittest.main()
