@@ -1713,11 +1713,16 @@ def _typed_values(files: list[tuple[Path, str]], ref: str, type_name: str) -> li
 
     - 型名から書いた値: `static let area = AppEvent.Area.invite`（`.invite` として返す）
     - その型の変数の初期値: `var result: T = .cancelled`・`let v: T = switch x { case .a: .b }`・`= c ? .a : .b`
+    - その型を含むタプルの型を書いた変数の初期値: `let (step, index): (T, Int) = switch self { case .pain: (.preloginPain, 1) }`
     - その変数への代入: 宣言したファイルの中の `result = .completed`・どのファイルでもメンバーとして書いた `visit.reader = .serverAi`
     - その型を広げる所（`extension T { … }`）に書いた値
     """
     qualified = re.compile(rf"{ref}\.(`?\w+`?)")
     declared = re.compile(rf"\b(?:var|let)\s+(\w+)\s*:\s*{ref}\??\s*(?:=(?!=)|[{{\n;])")
+    # 型の 1 つに T を持つタプルの型（`(T, Int)`・`(area: T, kind: U)?`）。名前はタプルの分解（`let (a, b)`）でもよい
+    tupled = re.compile(
+        rf"\b(?:var|let)\s+(?:\w+|\([^()]*\))\s*:\s*\([^(){{}}=]*(?<![\w.]){ref}[^(){{}}=]*\)\??\s*=(?!=)"
+    )
     results: list[str] = _extension_bodies(files, ref, type_name)
     members: set[str] = set()
     texts = [_strip_line_comments(text) for _, text in files]
@@ -1731,6 +1736,7 @@ def _typed_values(files: list[tuple[Path, str]], ref: str, type_name: str) -> li
             if text[match.end() - 1] == "=":
                 results.append(_right_hand_side(text, match.end()))
         members |= names
+        results += [_right_hand_side(text, match.end()) for match in tupled.finditer(text)]
         for name in names:
             for match in re.finditer(rf"(?<![\w.])(?:self\.)?{re.escape(name)}\s*=(?!=)", text):
                 results.append(_right_hand_side(text, match.end()))
@@ -1762,6 +1768,7 @@ def _forwarded_arguments(files: list[tuple[Path, str]], ref: str, type_name: str
       その型を受け取るクロージャの変数（`var cardFinished: (T) -> Void`）の呼び出しの括弧の中
     - その型の引数のラベルと、その型の保存プロパティの名前（memberwise init のラベル）に付けて渡した値
       （`PaywallView(source: .receiptLimit)`・`headline(for: .teaser)`）
+    - その型の引数の既定値（`init(registrationSource: T = .search)`）。省いて呼べば、その値が渡る
     """
     texts = [_strip_line_comments(text) for _, text in files]
     param = re.compile(rf"^(?:(\w+)\s+)?(\w+)\s*:\s*(?:inout\s+|@\w+\s+)*{ref}\??\s*(?:=|$)")
@@ -1769,6 +1776,7 @@ def _forwarded_arguments(files: list[tuple[Path, str]], ref: str, type_name: str
     stored = re.compile(rf"\b(?:var|let)\s+(\w+)\s*:\s*{ref}\??(?![\w.<\[])")
     names: set[str] = set()
     labels: set[str] = set()
+    bodies: list[str] = []
     for text in texts:
         if type_name not in text:
             continue
@@ -1784,9 +1792,10 @@ def _forwarded_arguments(files: list[tuple[Path, str]], ref: str, type_name: str
                 label = found.group(1) or found.group(2)
                 if label != "_":
                     labels.add(label)
+                if part[found.end() - 1:found.end()] == "=":
+                    bodies.append(re.sub(r"\s+", "", part[found.end():]))
         names.update(m.group(1) for m in closure.finditer(text))
         labels.update(m.group(1) for m in stored.finditer(text))
-    bodies: list[str] = []
     if names:
         call = re.compile(rf"(?<!\w)({'|'.join(sorted(map(re.escape, names)))})\s*\(")
         for text in texts:

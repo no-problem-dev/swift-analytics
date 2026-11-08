@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `analytics-gen.py audit` now also counts two more places where an app writes enum values:
+  - the initial value of a variable whose type is a tuple holding the type, including a
+    destructured one fed by a `switch` expression
+    (`let (step, index): (AppEvent.OnboardingStep, Int) = switch self { case .pain: (.preloginPain, 1) … }`)
+  - the default value of a parameter of the type (`init(registrationSource: AppEvent.Source = .search)`).
+    Calling without the argument sends that value
+
 ## [0.3.4] - 2026-11-08
 
 ### Fixed
