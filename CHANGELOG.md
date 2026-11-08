@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-08
+
 ### Fixed
 
 - `InstallID.adopt(_:defaults:)` stores the ID exactly as passed. It lower-cased it before, so an
