@@ -32,6 +32,8 @@ swift:
   property_type: StockUserProperty
   module: StockAnalytics           # 生成物を置くモジュール名（doc コメントに出るだけ）
   swiftui: true                    # trackScreen / trackImpression の型付き口も生成する
+  descriptions: true               # 任意。false にすると description と trigger を生成物の doc コメントに写さない
+                                   # （アプリの日本語の lint を生成物にも掛けたいときなど）
 
 extend: [...]         # 任意。共通の出来事に enum の値と引数を足す
 events: [...]
@@ -51,6 +53,7 @@ events:
     dedup: always                  # session | install | always
     description: ふたりプランの案内が実際に見えた
     trigger: PaywallView が 50% 以上 1 秒       # 任意。どこで撃つかの申し送り
+    track_reason: ...              # 任意。screen / impression を track() で撃ってよい理由（下の「track_reason」）
     parameters:
       source:
         type: enum
@@ -66,11 +69,61 @@ events:
 | `count` | `Int` | 個数・日数 |
 | `number` | `Double` | 割合・秒 |
 | `flag` | `Bool` | 真偽。GA4 では 0/1 に落ちる |
-| `bucket` | `Int` を受け取り帯に落とす | 生の件数を送らないための型。`edges: [1, 6, 16]` |
+| `bucket` | `Int` を受け取り帯に落とす | 生の件数を送らないための型。`edges: [1, 6, 16]`。帯の名前は `labels:` で決められる（下の「bucket の帯の名前」） |
 | `token` | 生成される入れ子の struct（`init?(_:)`） | **サーバーが作った不透明な値**（`render_id`）と、**意味で決めたキー**（`place:ChIJ…`）だけ。出来事の引数にだけ使え、属性には使えない |
 
 `enum` の値は `snake_case` で書く。Swift 側の case 名は自動で lowerCamelCase になり、
 raw 値は書いたままが送られる。
+
+### bucket の帯の名前
+
+既定の帯の名前は `AnalyticsValue.bucket(_:edges:)` が作る（`edges: [1, 6, 16]` なら `0`・`1_5`・`6_15`・`16_plus`）。
+受け手がもう別の名前を読んでいるときは `labels:` で決める。
+
+```yaml
+      streak:
+        type: bucket
+        edges: [1, 2, 10]
+        labels: ["0", "1", "2_9", "10+"]   # 1 つ目は一番下の edge より下。続きは edge ごと（昇順）
+```
+
+- `labels` は `edges` より 1 つ多い。`edges` は小さい順に、重ねずに書く
+- 名前は英小文字・数字・`_` `+` `.` `-` だけ。同じ名前は 2 回書けない。`+` を含む名前は引用符で書く
+- Swift は `AnalyticsValue.bucket(_:edges:labels:)` で送る。`--json` と `--ts` の `values` は `labels` になる
+- 引数にも属性にも書ける。共通の引数の `labels` は `extend:` で変えられない
+
+### optional
+
+```yaml
+      product:
+        type: enum
+        type_name: PlanPeriod
+        values: [yearly, monthly, weekly, lifetime]
+        optional: true               # 値が無いことがある（買わずに閉じた・プランを読めなかった）
+```
+
+- どの型にも書ける。生成される Swift の引数は `PlanPeriod? = nil` になり、**nil なら `props` に載らない**
+  （空の文字や 0 にして送らない）。省いて呼べるので、値を持たない場面では書かなくてよい
+- `--json` では引数に `"optional": true` が付く（無ければ必須）。`--ts` の `EventProps` では `product?:`
+- 「分からない」を enum の値（`unknown`）にしない。値が無いことは、引数が無いことで表す
+- 共通の引数も、アプリの `extend:` で `optional: true` にできる（その場面で値を持てないアプリのため）。
+  共通で任意の引数を必須に戻す書き方は無い
+
+### track_reason
+
+`kind` が `screen` か `impression` の出来事は、`trackScreen` / `trackImpression` で撃つ（下の「検査されること」）。
+**見える物（View）が無い場所から送るしかない**とき —— シートを出した後のコールバック、お知らせを出した知らせ ——
+だけ、理由を書いて `track()` でも撃てるようにする。
+
+```yaml
+extend:
+  - name: paywall_shown
+    track_reason: 画面ごとのペイウォールはシートを出したコールバックから送る（PaywallSheet.onPresented）
+```
+
+- 書けるのは `kind` が `screen` か `impression` の出来事だけ。アプリの出来事は `events:` に、共通の出来事は `extend:` に書く
+- 書いても `trackImpression` / `trackScreen` で撃つ所はそのまま通る
+- `track()` で撃つ所では、1 回の表示を 1 回と数えるのはアプリの責任になる（`pw_id` のように 1 回の表示ごとの ID で束ねる）
 
 ### token
 
@@ -136,7 +189,7 @@ events:
 | `include` は `dialect: envelope` のカタログでだけ使える。共通の出来事は固定の封筒で送る前提で、ga4 の予約名（`first_open`）にも first_party の列の数にも収まらない | 落ちる |
 | 共通の出来事を `events:` に書き直さない。値や引数は `extend:` で足す | 落ちる |
 | `extend:` に書けるのは共通カタログにある出来事だけ | 落ちる |
-| 共通の引数に書けるのは `values` だけ（`type`・`type_name`・`edges`・`pattern` などは変えられない） | 落ちる |
+| 共通の引数に書けるのは `values` と `optional: true` だけ（`type`・`type_name`・`edges`・`pattern` などは変えられない） | 落ちる |
 | 値を足せるのは `extensible: true` の enum だけ。共通の値をもう一度書くこと、同じ値を 2 回足すことはできない | 落ちる |
 | 共通の値・引数を消す書き方は無い | — |
 
@@ -155,13 +208,15 @@ events:
         values: [onboarding, paywall, settings, whats_new]
 ```
 
-`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。アプリのカタログの enum に書いてもよいが、
+`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。共通カタログの enum は、
+AnalyticsCore が送る `FirstOpenKind` のほかはどれも `extensible: true`（`PaywallCloseResult` の `continue_free`、
+`PlanPeriod` の `quarterly` などをアプリが足せる）。アプリのカタログの enum に書いてもよいが、
 `--json` と `--ts` に載るだけで生成器の動きは変わらない。
 
 ### sent_by: package
 
 共通カタログの `first_open` と `internal_device` は、AnalyticsCore が自分で送る
-（`FirstLaunch.recordLaunch(sendingTo:)`・`InternalDevice.mark(sendingTo:)`）。`sent_by: package` の出来事は
+（`FirstLaunch.recordLaunch(sendingTo:)`・`AnalyticsInternalDevice.mark(sendingTo:)`）。`sent_by: package` の出来事は
 **アプリの Swift の型に出さず**、`--json` と `--ts` にだけ載る。送る口を 1 つにして、2 か所から撃てないようにする。
 `audit` もこの出来事を数えない。`sent_by` は共通カタログにだけ書ける。
 
@@ -170,6 +225,18 @@ events:
 アプリにその場面が無い共通の出来事（お知らせが無いアプリの `whats_new_*` など）は、撃っていなくても落とさず、
 `（知らせ）` の行で知らせるだけ。値の確かめも、共通の enum では**アプリが足した値**だけを見る
 （`PaywallSource` の `limit` が無いアプリもある）。アプリの出来事・アプリが足した値・アプリの引数は、今までどおり全部を確かめる。
+
+### audit の数え方
+
+- **撃っているか**は、出来事を作る式（`.paywallShown(…)`・`.entrySaved`）がソースのどこかにあるかで見る。
+  `track(` の中でなくてよい（`send { .paywallShown(source: $0, …) }`、出来事を作って返す関数、`trackImpression(shown)`）
+- **値は型（`type_name`）ごとに数える。** `extend:` で `ScreenName` に足した `home` は、`screen_viewed`・`tapped`・
+  `ScreenName` を使うアプリの出来事のどれかで直書きされていれば撃っている
+- 値を探すのは、その型を使う出来事を作る式の括弧の中だけ
+- **確かめる値（アプリの型なら全部、共通の型ならアプリが足した値）が 1 つも直書きされていない型は見ない。**
+  変数で渡している（`source: source`・`role.measured`）ので、静的には確かめられない。
+  共通の値（`.onboarding`）の直書きは数えない —— アプリが足した値を全部直書きする理由にならない
+- 生成物（頭に「このファイルは analytics-gen.py が書き出しています」のあるファイル）と `//` のコメントは見ない
 
 ## user_properties
 
@@ -242,7 +309,7 @@ facts:
 |---|---|
 | カタログの全ケース・全値が 1 箇所以上から撃たれているか | 宣言だけ残ると、ダッシュボードの 0 が「使われていない」と読める |
 | **同じ発火（引数まで込みで同じもの）が 2 箇所以上に無いか** | 1 回の閲覧で複数回撃つ事故は、テストでもレビューでも落ちない |
-| **`kind` に合った撃ち方をしているか**（`screen`→`trackScreen` / `impression`→`trackImpression` / `interaction`・`outcome`→`track`） | 表示を 1 露出 1 回に留めるのはこの 2 つだけ。`track()` で撃つと、その規則がどこにも掛からない |
+| **`kind` に合った撃ち方をしているか**（`screen`→`trackScreen` / `impression`→`trackImpression` / `interaction`・`outcome`→`track`。`track_reason` のある出来事は `track` も可） | 表示を 1 露出 1 回に留めるのはこの 2 つだけ。`track()` で撃つと、その規則がどこにも掛からない |
 | 属性が 1 箇所以上から設定されているか | 宣言だけの属性はセグメントが空になる |
 | 文字列直書きの送信が無いか | カタログを迂回されると検査が意味を失う |
 
@@ -289,7 +356,7 @@ facts:
 | `includes` | 取り込んだカタログの `name` と `version` の並び。取り込んでいなければ `[]` |
 | `events[].origin` | `common`（共通カタログの出来事）か `app`（アプリの出来事） |
 | `events[].sentBy` | `package`（AnalyticsCore が送る）か `app` |
-| `events[].parameters` | **YAML に書いた順**（列の割り当てはこの順）。`key`・`origin`・`type` は必ずある。`extend:` で足した引数は `origin: app` で後ろに付く |
+| `events[].parameters` | **YAML に書いた順**（列の割り当てはこの順）。`key`・`origin`・`type` は必ずある。`extend:` で足した引数は `origin: app` で後ろに付く。任意の引数には `"optional": true` が付き、`props` に無くてよい |
 | `userProperties` | 属性。`token` は無い |
 | `facts` | サーバーで数えるもの。照らし合わせには使わない |
 

@@ -31,6 +31,67 @@ struct InstallIDTests {
     }
 }
 
+@Suite("前の版の install ID を引き継ぐ")
+struct InstallIDAdoptTests {
+
+    @Test("まだ無ければ渡した ID を小文字で保存し、current がそれを返す")
+    func adoptsWhenEmpty() {
+        let defaults = makeDefaults()
+        let legacy = "8C1F2A4E-0B7D-4E8A-9C3B-1D2E3F405162"
+        #expect(InstallID.adopt(legacy, defaults: defaults))
+        #expect(InstallID.current(defaults: defaults) == legacy.lowercased())
+    }
+
+    @Test("もうあれば替えない。UUID でない値は受けない")
+    func keepsExistingAndRejectsNonUUID() {
+        let defaults = makeDefaults()
+        #expect(!InstallID.adopt("legacy-id", defaults: defaults))
+        let made = InstallID.current(defaults: defaults)
+        #expect(!InstallID.adopt(UUID().uuidString, defaults: defaults))
+        #expect(InstallID.current(defaults: defaults) == made)
+    }
+}
+
+@Suite("インストールでの回数")
+struct OccurrenceCountTests {
+
+    @Test("next は 1 から数え、鍵ごとに分かれ、current は足さない")
+    func countsPerKey() {
+        let defaults = makeDefaults()
+        #expect(OccurrenceCount.current("paywall_shown", defaults: defaults) == 0)
+        #expect(OccurrenceCount.next("paywall_shown", defaults: defaults) == 1)
+        #expect(OccurrenceCount.next("paywall_shown", defaults: defaults) == 2)
+        #expect(OccurrenceCount.next("whats_new_shown", defaults: defaults) == 1)
+        #expect(OccurrenceCount.current("paywall_shown", defaults: defaults) == 2)
+    }
+
+    @Test("reset は 1 つ、resetAll は全部を忘れる。ほかの鍵には触らない")
+    func resets() {
+        let defaults = makeDefaults()
+        defaults.set("keep", forKey: "app.other")
+        OccurrenceCount.next("a", defaults: defaults)
+        OccurrenceCount.next("b", defaults: defaults)
+        OccurrenceCount.reset("a", defaults: defaults)
+        #expect(OccurrenceCount.current("a", defaults: defaults) == 0)
+        #expect(OccurrenceCount.current("b", defaults: defaults) == 1)
+        OccurrenceCount.resetAll(defaults: defaults)
+        #expect(OccurrenceCount.current("b", defaults: defaults) == 0)
+        #expect(defaults.string(forKey: "app.other") == "keep")
+    }
+
+    @Test("同時に数えても取りこぼさない")
+    func concurrent() async {
+        let defaults = makeDefaults()
+        nonisolated(unsafe) let shared = defaults
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<100 {
+                group.addTask { OccurrenceCount.next("x", defaults: shared) }
+            }
+        }
+        #expect(OccurrenceCount.current("x", defaults: defaults) == 100)
+    }
+}
+
 @Suite("ビルドの経路")
 struct BuildChannelTests {
 
@@ -56,6 +117,15 @@ struct BuildChannelTests {
 
 @Suite("初めての起動")
 struct FirstLaunchTests {
+
+    @Test("アプリが前に自分の規則で送っていれば（sentBefore）送らず、送った印だけ残す")
+    func respectsTheAppsOwnRecord() {
+        let defaults = makeDefaults()
+        let recorder = RecordingAnalytics()
+        #expect(FirstLaunch.recordLaunch(sendingTo: recorder, sentBefore: true, defaults: defaults) == nil)
+        #expect(FirstLaunch.recordLaunch(sendingTo: recorder, defaults: defaults) == nil)
+        #expect(recorder.count(of: "first_open") == 0)
+    }
 
     @Test("新しく入れた端末では first_open{kind: fresh} を1回だけ送る")
     func sendsFreshOnce() {
@@ -107,12 +177,21 @@ struct InternalDeviceTests {
         let defaults = makeDefaults()
         let recorder = RecordingAnalytics()
 
-        #expect(!InternalDevice.isInternal(defaults: defaults))
-        #expect(InternalDevice.mark(sendingTo: recorder, defaults: defaults))
-        #expect(!InternalDevice.mark(sendingTo: recorder, defaults: defaults))
+        #expect(!AnalyticsInternalDevice.isInternal(defaults: defaults))
+        #expect(AnalyticsInternalDevice.mark(sendingTo: recorder, defaults: defaults))
+        #expect(!AnalyticsInternalDevice.mark(sendingTo: recorder, defaults: defaults))
 
-        #expect(InternalDevice.isInternal(defaults: defaults))
+        #expect(AnalyticsInternalDevice.isInternal(defaults: defaults))
         #expect(recorder.count(of: "internal_device") == 1)
+    }
+
+    @Test("sendAgain なら印があっても送り直す（uid が替わったとき）")
+    func sendsAgainWhenAsked() {
+        let defaults = makeDefaults()
+        let recorder = RecordingAnalytics()
+        AnalyticsInternalDevice.mark(sendingTo: recorder, defaults: defaults)
+        #expect(AnalyticsInternalDevice.mark(sendingTo: recorder, defaults: defaults, sendAgain: true))
+        #expect(recorder.count(of: "internal_device") == 2)
     }
 
     @Test("パッケージが送る出来事は install で数える outcome")

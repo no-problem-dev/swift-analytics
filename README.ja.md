@@ -35,7 +35,7 @@
 - **受け口も同じカタログを使う。** `--json` と `--ts` で、サーバー（Cloudflare Worker・studio）が照らし合わせ、
   import するカタログを書き出します
 - **インストールとビルドの扱いを 1 か所に。** `InstallID`・`BuildChannel`（debug / TestFlight / App Store）・
-  `FirstLaunch`（`first_open{kind: fresh|upgraded}` を 1 回送る）・`InternalDevice`（作り手の端末の印を 1 回送る）
+  `FirstLaunch`（`first_open{kind: fresh|upgraded}` を 1 回送る）・`AnalyticsInternalDevice`（作り手の端末の印を 1 回送る）
 - **覚えている止めスイッチ。** `AnalyticsSwitch` は、本人が止めている間のすべてを捨て、その選択を
   起動をまたいで覚え、溜めた物を消します
 - **外部依存ゼロ。** SwiftPM は依存をパッケージ単位で解決するので、vendor の SDK（Firebase / PostHog）は

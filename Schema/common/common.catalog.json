@@ -1,7 +1,7 @@
 {
   "format": 1,
   "generator": "swift-analytics/Scripts/analytics-gen.py",
-  "catalogVersion": 1,
+  "catalogVersion": 2,
   "dialect": "envelope",
   "limits": {
     "value": 64,
@@ -143,9 +143,10 @@
             "apple",
             "google",
             "anonymous",
-            "email"
+            "email",
+            "other"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -279,7 +280,7 @@
             "ok",
             "unavailable"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -365,7 +366,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -406,7 +407,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -452,7 +453,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -465,7 +466,7 @@
             "pending",
             "failed"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -543,7 +544,7 @@
             "restored",
             "dismissed"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -557,7 +558,7 @@
             "auto",
             "swipe_down"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -570,8 +571,9 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
-          "appValues": []
+          "extensible": true,
+          "appValues": [],
+          "optional": true
         },
         {
           "key": "open_s",
@@ -616,7 +618,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -636,7 +638,7 @@
             "paywall",
             "settings"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -648,7 +650,7 @@
             "nothing_to_restore",
             "failed"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -721,7 +723,7 @@
             "finished",
             "swipe_down"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]

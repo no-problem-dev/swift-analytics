@@ -58,6 +58,27 @@ public enum AnalyticsValue: Sendable, Equatable {
         }
         return .text("\(first)_plus")
     }
+
+    /// Reduces a number to a band, labelled with names the app chose.
+    ///
+    /// For receivers that already read their own band names (`1` … `9`, `10+`). `labels` has one
+    /// more entry than `edges`: the first names everything below the lowest edge, and each next one
+    /// the band that starts at the next edge, in ascending order.
+    ///
+    /// ```swift
+    /// AnalyticsValue.bucket(0, edges: [1, 2, 10], labels: ["0", "1", "2_9", "10+"])   // "0"
+    /// AnalyticsValue.bucket(12, edges: [1, 2, 10], labels: ["0", "1", "2_9", "10+"])  // "10+"
+    /// ```
+    ///
+    /// The catalog's `labels:` checks the count before anything is generated. Called by hand with
+    /// the wrong count, it falls back to ``bucket(_:edges:)``'s labels rather than send a band
+    /// under another band's name.
+    public static func bucket(_ value: Int, edges: [Int], labels: [String]) -> AnalyticsValue {
+        let sorted = edges.sorted()
+        guard labels.count == sorted.count + 1 else { return bucket(value, edges: edges) }
+        let band = sorted.lastIndex { value >= $0 }.map { $0 + 1 } ?? 0
+        return .text(labels[band])
+    }
 }
 
 extension AnalyticsValue: CustomStringConvertible {

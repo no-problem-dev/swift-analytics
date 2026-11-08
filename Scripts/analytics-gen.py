@@ -366,11 +366,15 @@ class Parameter:
     type: str
     values: list[str] = field(default_factory=list)
     edges: list[int] = field(default_factory=list)
+    # bucket の帯の名前（`labels:`）。空なら AnalyticsValue.bucket(_:edges:) の名前（`1_5`・`16_plus`）
+    labels: list[str] = field(default_factory=list)
     description: str = ""
     type_name: str = ""
     pattern: str = ""
     max_length: int = 0
     extensible: bool = False
+    # 値が無いことがある引数（買わずに閉じたときの `paywall_closed.product`）。Swift は Optional になり、nil なら送らない
+    optional: bool = False
     origin: str = "app"
     # 共通の enum にアプリが足した値（`extend:`）。共通の値は `values` の頭に残る
     app_values: list[str] = field(default_factory=list)
@@ -406,6 +410,8 @@ class Event:
     parameters: list[Parameter] = field(default_factory=list)
     origin: str = "app"
     sent_by: str = "app"
+    # screen / impression を track() で撃ってよい理由（見える物が無い場所から送る）。空なら撃ち方の規則どおり
+    track_reason: str = ""
 
     @property
     def fired_by_app(self) -> bool:
@@ -419,6 +425,7 @@ class UserProperty:
     type: str
     values: list[str] = field(default_factory=list)
     edges: list[int] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
     description: str = ""
     type_name: str = ""
 
@@ -448,6 +455,8 @@ class Schema:
     facts: list[Fact] = field(default_factory=list)
     # 取り込んだカタログ（名前と版）。今は common だけ
     includes: list[tuple[str, int]] = field(default_factory=list)
+    # カタログの description と trigger を生成した Swift の doc コメントに写すか（`swift.descriptions`）
+    descriptions: bool = True
 
     @property
     def value_limit(self) -> int:
@@ -506,6 +515,7 @@ def load(path: Path, common: Path | None = None) -> Schema:
         property_type=swift.get("property_type", "AppUserProperty"),
         module=swift.get("module", "App"),
         swiftui=bool(swift.get("swiftui", True)),
+        descriptions=_swift_flag(swift, "descriptions"),
         dialect=dialect,
         events=events,
         properties=[_property(item) for item in raw.get("user_properties") or []],
@@ -519,6 +529,13 @@ def load(path: Path, common: Path | None = None) -> Schema:
                 parameter.max_length = schema.value_limit
     validate(schema)
     return schema
+
+
+def _swift_flag(swift: dict, key: str) -> bool:
+    value = swift.get(key, True)
+    if not isinstance(value, bool):
+        raise SchemaError(f"swift.{key} は true か false（{value}）")
+    return value
 
 
 def _include_names(value) -> list[str]:
@@ -563,13 +580,15 @@ def _apply_extend(items, included: list[Event]) -> None:
         if not isinstance(item, dict):
             raise SchemaError(f"extend の 1 件は `name` と `parameters` のマップ（{item}）")
         name = _require(item, "name")
-        _reject_unknown_keys(item, {"name", "parameters"}, f"extend の {name}")
+        _reject_unknown_keys(item, {"name", "parameters", "track_reason"}, f"extend の {name}")
         if name in seen:
             raise SchemaError(f"extend: {name} が 2 回ある。1 つにまとめてください")
         seen.add(name)
         event = by_name.get(name)
         if event is None:
             raise SchemaError(f"extend: {name} は共通カタログに無い。アプリの出来事なら events に書く")
+        if "track_reason" in item:
+            event.track_reason = _track_reason(item, name, event.kind)
         for key, spec in (item.get("parameters") or {}).items():
             existing = next((p for p in event.parameters if p.key == key), None)
             if existing is None:
@@ -582,11 +601,19 @@ def _apply_extend(items, included: list[Event]) -> None:
             where = f"extend: {name}.{key}"
             if not isinstance(spec, dict):
                 raise SchemaError(f"{where} は `values: [...]` のマップ")
-            changed = sorted(set(spec) - {"values"})
+            changed = sorted(set(spec) - {"values", "optional"})
             if changed:
                 raise SchemaError(
-                    f"{where}: 共通の引数の {', '.join(changed)} は変えられない（足せるのは extensible な enum の values だけ）"
+                    f"{where}: 共通の引数の {', '.join(changed)} は変えられない"
+                    "（書けるのは extensible な enum の values と optional: true だけ）"
                 )
+            if "optional" in spec:
+                # 共通の引数を、このアプリでは無いことがある引数にする。必須に戻す書き方は無い
+                if spec["optional"] is not True:
+                    raise SchemaError(f"{where}: optional に書けるのは true だけ（共通で任意の引数を必須にはできない）")
+                existing.optional = True
+            if "values" not in spec:
+                continue
             if existing.type != "enum" or not existing.extensible:
                 raise SchemaError(f"{where}: extensible: true の enum でないので値を足せない")
             values = spec.get("values")
@@ -644,7 +671,9 @@ def _event(item: dict, origin: str = "app") -> Event:
     parameters = [_parameter(key, value) for key, value in (item.get("parameters") or {}).items()]
     for parameter in parameters:
         parameter.origin = origin
+    track_reason = _track_reason(item, name, kind)
     return Event(
+        track_reason=track_reason,
         name=name,
         case=item.get("case") or lower_camel(name),
         kind=kind,
@@ -657,6 +686,18 @@ def _event(item: dict, origin: str = "app") -> Event:
     )
 
 
+def _track_reason(item: dict, name: str, kind: str) -> str:
+    """`track_reason`（screen / impression を track() で撃ってよい理由）を読む。"""
+    reason = item.get("track_reason", "")
+    if reason == "":
+        return ""
+    if not isinstance(reason, str) or not reason.strip():
+        raise SchemaError(f"{name}: track_reason は理由の文（trackImpression / trackScreen を使えないわけ）")
+    if kind not in ("screen", "impression"):
+        raise SchemaError(f"{name}: track_reason は kind が screen か impression の出来事にだけ書ける（いまは {kind}）")
+    return reason
+
+
 def _parameter(key: str, value: dict) -> Parameter:
     if not isinstance(value, dict):
         raise SchemaError(f"{key}: 引数は `type` などのマップ（{value}）")
@@ -665,12 +706,17 @@ def _parameter(key: str, value: dict) -> Parameter:
         raise SchemaError(f"{key}: extensible は true か false（{extensible}）")
     if extensible and value.get("type") != "enum":
         raise SchemaError(f"{key}: extensible は enum にだけ書ける")
+    optional = value.get("optional", False)
+    if not isinstance(optional, bool):
+        raise SchemaError(f"{key}: optional は true か false（{optional}）")
     return Parameter(
         extensible=extensible,
+        optional=optional,
         key=key,
         type=_require(value, "type", context=key),
         values=list(value.get("values") or []),
         edges=list(value.get("edges") or []),
+        labels=[str(label) for label in value.get("labels") or []],
         description=value.get("description", ""),
         type_name=str(value.get("type_name") or ""),
         pattern=str(value.get("pattern") or ""),
@@ -686,6 +732,7 @@ def _property(item: dict) -> UserProperty:
         type=_require(item, "type", context=name),
         values=list(item.get("values") or []),
         edges=list(item.get("edges") or []),
+        labels=[str(label) for label in item.get("labels") or []],
         description=item.get("description", ""),
         type_name=str(item.get("type_name") or ""),
     )
@@ -778,6 +825,7 @@ def validate(schema: Schema) -> None:
             problems.append(f"{prop.name}: enum なのに values が無い")
         if prop.type == "bucket" and not prop.edges:
             problems.append(f"{prop.name}: bucket なのに edges が無い")
+        problems += _validate_labels(prop.name, prop.type, prop.edges, prop.labels, value_limit=schema.value_limit)
         if schema.dialect == "ga4":
             problems += _validate_ga4_name(prop.name, reserved_names=False)
         if schema.dialect in ("first_party", "envelope"):
@@ -811,11 +859,47 @@ def _validate_parameter(owner: str, parameter: Parameter, *, value_limit: int) -
                 problems.append(f"{owner}.{parameter.key}: 値 {value} が {value_limit} 字を超える")
     if parameter.type == "bucket" and not parameter.edges:
         problems.append(f"{owner}.{parameter.key}: bucket なのに edges が無い")
+    problems += _validate_labels(f"{owner}.{parameter.key}", parameter.type, parameter.edges, parameter.labels,
+                                 value_limit=value_limit)
     if parameter.type == "token":
         problems += _validate_token(owner, parameter, value_limit=value_limit)
     elif parameter.pattern or parameter.max_length:
         problems.append(f"{owner}.{parameter.key}: pattern と max_length は token にだけ書ける")
     return problems
+
+
+def _validate_labels(where: str, type_: str, edges: list[int], labels: list[str], *, value_limit: int) -> list[str]:
+    """bucket の帯の名前（`labels:`）。1 つ目が一番下の edge より下、続きが edge ごとの帯（昇順）。"""
+    if not labels:
+        return []
+    if type_ != "bucket":
+        return [f"{where}: labels は bucket にだけ書ける"]
+    problems: list[str] = []
+    if edges != sorted(edges) or len(set(edges)) != len(edges):
+        problems.append(f"{where}: labels を書くときは edges を小さい順に重ねずに書く（{edges}）")
+    if len(labels) != len(edges) + 1:
+        problems.append(
+            f"{where}: labels は edges より 1 つ多く書く（一番下の edge より下の帯が 1 つ目）。edges {len(edges)} 個・labels {len(labels)} 個"
+        )
+    if len(set(map(str, labels))) != len(labels):
+        problems.append(f"{where}: labels に同じ名前が 2 回ある")
+    for label in labels:
+        if not isinstance(label, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_+.-]*", label):
+            problems.append(f"{where}: 帯の名前 {label} は英小文字・数字・_ + . - だけ（\"10+\" のように引用符で書く）")
+        elif len(label) > value_limit:
+            problems.append(f"{where}: 帯の名前 {label} が {value_limit} 字を超える")
+    return problems
+
+
+def bucket_values(edges: list[int], labels: list[str]) -> list[str]:
+    """送られうる帯の名前の全部。`labels:` があればそれ、無ければ AnalyticsValue.bucket(_:edges:) の名前。"""
+    return list(labels) if labels else bucket_labels(edges)
+
+
+def _swift_bucket(value: str, edges: list[int], labels: list[str]) -> str:
+    if not labels:
+        return f".bucket({value}, edges: {edges})"
+    return f".bucket({value}, edges: {edges}, labels: [{', '.join(json.dumps(label) for label in labels)}])"
 
 
 def _validate_token(owner: str, parameter: Parameter, *, value_limit: int) -> list[str]:
@@ -917,12 +1001,12 @@ def _render_events(schema: Schema) -> list[str]:
     ]
     events = schema.app_fired_events
     for event in events:
-        if event.description:
+        if event.description and schema.descriptions:
             lines.append(f"    /// {event.description}")
         if event.origin != "app":
             lines.append("    ///")
             lines.append(f"    /// 共通カタログ（{event.origin}）の出来事。名前と共通の引数はアプリで変えない。")
-        if event.trigger:
+        if event.trigger and schema.descriptions:
             lines.append(f"    ///")
             lines.append(f"    /// 撃つ場所: {event.trigger}")
         lines.append(f"    case {event.case}{_case_payload(event)}")
@@ -935,7 +1019,7 @@ def _render_events(schema: Schema) -> list[str]:
             if parameter.swift_type_name in emitted:
                 continue
             emitted.add(parameter.swift_type_name)
-            lines.append(f"    /// `{event.name}.{parameter.key}` の値。" + (parameter.description or ""))
+            lines.append(f"    /// `{event.name}.{parameter.key}` の値。" + (parameter.description if schema.descriptions else ""))
             lines.append(f"    public enum {parameter.swift_type_name}: String, Sendable, CaseIterable {{")
             for value in parameter.values:
                 lines.append(f"        case {swift_case(value)}")
@@ -947,7 +1031,7 @@ def _render_events(schema: Schema) -> list[str]:
             if parameter.swift_type_name in emitted:
                 continue
             emitted.add(parameter.swift_type_name)
-            lines += _render_token(event, parameter)
+            lines += _render_token(event, parameter, descriptions=schema.descriptions)
 
     lines += _render_switch("name", events, lambda e: f'"{e.name}"')
     lines += _render_switch("kind", events, lambda e: f".{e.kind}", type_name="EventKind")
@@ -957,14 +1041,14 @@ def _render_events(schema: Schema) -> list[str]:
     return lines
 
 
-def _render_token(event: Event, parameter: Parameter) -> list[str]:
+def _render_token(event: Event, parameter: Parameter, *, descriptions: bool = True) -> list[str]:
     """形の決まった文字列の型。**作れたものだけが送れる**ので、発火点に検査を書かせない。"""
     hashes = "#"
     while f'"{hashes}' in parameter.pattern:
         hashes += "#"
     literal = f'{hashes}"{parameter.pattern}"{hashes}'
     lines = [
-        f"    /// `{event.name}.{parameter.key}` の値。" + (parameter.description or ""),
+        f"    /// `{event.name}.{parameter.key}` の値。" + (parameter.description if descriptions else ""),
         "    ///",
         f"    /// 値の全体が `{parameter.pattern}` に合い、{parameter.max_length} 字までのものだけを作れる。",
         f"    public struct {parameter.swift_type_name}: Sendable, Hashable, CustomStringConvertible {{",
@@ -990,7 +1074,10 @@ def _render_token(event: Event, parameter: Parameter) -> list[str]:
 def _case_payload(event: Event) -> str:
     if not event.parameters:
         return ""
-    parts = [f"{p.swift_label}: {_swift_type(p)}" for p in event.parameters]
+    parts = [
+        f"{p.swift_label}: {_swift_type(p)}? = nil" if p.optional else f"{p.swift_label}: {_swift_type(p)}"
+        for p in event.parameters
+    ]
     return "(" + ", ".join(parts) + ")"
 
 
@@ -1032,8 +1119,17 @@ def _render_parameters(events: list[Event]) -> list[str]:
             lines.append(f"        case .{event.case}: return [:]")
             continue
         binding = _binding(event)
-        entries = ", ".join(f'"{p.key}": {_value_expression(p)}' for p in event.parameters)
-        lines.append(f"        case let .{event.case}{binding}: return [{entries}]")
+        entries = ", ".join(f'"{p.key}": {_value_expression(p)}' for p in event.parameters if not p.optional)
+        optional = [p for p in event.parameters if p.optional]
+        if not optional:
+            lines.append(f"        case let .{event.case}{binding}: return [{entries}]")
+            continue
+        # 任意の引数は、値があるときだけ載せる（nil を空の文字や 0 にして送らない）
+        lines.append(f"        case let .{event.case}{binding}:")
+        lines.append(f"            var parameters: [String: AnalyticsValue] = [{entries or ':'}]")
+        for p in optional:
+            lines.append(f'            if let {p.swift_label} {{ parameters["{p.key}"] = {_value_expression(p)} }}')
+        lines.append("            return parameters")
     lines += ["        }", "    }"]
     return lines
 
@@ -1045,7 +1141,7 @@ def _value_expression(parameter: Parameter) -> str:
         "count": f".count({key})",
         "number": f".number({key})",
         "flag": f".flag({key})",
-        "bucket": f".bucket({key}, edges: {parameter.edges})",
+        "bucket": _swift_bucket(key, parameter.edges, parameter.labels),
         "token": f".text({key}.rawValue)",
     }[parameter.type]
 
@@ -1057,7 +1153,7 @@ def _render_properties(schema: Schema) -> list[str]:
         "",
     ]
     for prop in schema.properties:
-        if prop.description:
+        if prop.description and schema.descriptions:
             lines.append(f"    /// {prop.description}")
         payload = f"({_property_payload(prop)})" if prop.type != "flag" or True else ""
         lines.append(f"    case {prop.case}{payload}")
@@ -1081,7 +1177,7 @@ def _render_properties(schema: Schema) -> list[str]:
             lines.append(f"        case let .{prop.case}(value): return value.rawValue")
         elif prop.type == "bucket":
             lines.append(
-                f"        case let .{prop.case}(value): return AnalyticsValue.bucket(value, edges: {prop.edges}).description"
+                f"        case let .{prop.case}(value): return AnalyticsValue{_swift_bucket('value', prop.edges, prop.labels)}.description"
             )
         else:
             lines.append(f"        case let .{prop.case}(value): return String(describing: value)")
@@ -1159,7 +1255,8 @@ def bucket_labels(edges: list[int]) -> list[str]:
     return labels
 
 
-def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter: Parameter | None = None) -> dict:
+def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter: Parameter | None = None,
+                      labels: list[str] | None = None) -> dict:
     shape: dict = {"type": type_}
     if type_ == "enum":
         shape["values"] = list(values)
@@ -1169,7 +1266,7 @@ def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter
                 shape["appValues"] = list(parameter.app_values)
     elif type_ == "bucket":
         shape["edges"] = sorted(edges)
-        shape["values"] = bucket_labels(edges)
+        shape["values"] = bucket_values(edges, labels or [])
     elif type_ == "token" and parameter is not None:
         shape["pattern"] = parameter.pattern
         shape["maxLength"] = parameter.max_length
@@ -1205,14 +1302,15 @@ def render_json(schema: Schema) -> str:
                 "origin": event.origin,
                 "sentBy": event.sent_by,
                 "parameters": [
-                    {"key": p.key, "origin": p.origin, **_json_value_shape(p.type, p.values, p.edges, p)}
+                    {"key": p.key, "origin": p.origin, **_json_value_shape(p.type, p.values, p.edges, p, p.labels),
+                     **({"optional": True} if p.optional else {})}
                     for p in event.parameters
                 ],
             }
             for event in schema.events
         ],
         "userProperties": [
-            {"name": prop.name, **_json_value_shape(prop.type, prop.values, prop.edges)}
+            {"name": prop.name, **_json_value_shape(prop.type, prop.values, prop.edges, labels=prop.labels)}
             for prop in schema.properties
         ],
         "facts": [
@@ -1238,18 +1336,20 @@ def _ts_type(parameter: Parameter) -> str:
     if parameter.type == "enum":
         return parameter.swift_type_name
     if parameter.type == "bucket":
-        return " | ".join(_ts_string(label) for label in bucket_labels(parameter.edges))
+        return " | ".join(_ts_string(label) for label in bucket_values(parameter.edges, parameter.labels))
     return {"count": "number", "number": "number", "flag": "boolean", "token": "string"}[parameter.type]
 
 
 def _ts_shape(parameter: Parameter) -> str:
     fields = [f"type: {_ts_string(parameter.type)}", f"origin: {_ts_string(parameter.origin)}"]
+    if parameter.optional:
+        fields.append("optional: true")
     if parameter.type == "enum":
         fields.append(f"values: {parameter.swift_type_name}")
         fields.append(f"extensible: {'true' if parameter.extensible else 'false'}")
     elif parameter.type == "bucket":
         fields.append(f"edges: {json.dumps(sorted(parameter.edges))}")
-        fields.append(f"values: {json.dumps(bucket_labels(parameter.edges))}")
+        fields.append(f"values: {json.dumps(bucket_values(parameter.edges, parameter.labels), ensure_ascii=False)}")
     elif parameter.type == "token":
         fields.append(f"pattern: {_ts_string(parameter.pattern)}")
         fields.append(f"maxLength: {parameter.max_length}")
@@ -1305,14 +1405,14 @@ def render_ts(schema: Schema) -> str:
         + "] as const satisfies readonly EventName[];",
         "export type CommonEventName = (typeof COMMON_EVENT_NAMES)[number];",
         "",
-        "/** 出来事ごとの `props` の型。生成した Swift は引数を全部埋めて送る。 */",
+        "/** 出来事ごとの `props` の型。生成した Swift は引数を全部埋めて送る（`?` の付いた任意の引数は、値が無ければ載らない）。 */",
         "export interface EventProps {",
     ]
     for event in schema.events:
         if not event.parameters:
             out.append(f"  {event.name}: Record<string, never>;")
             continue
-        fields = "; ".join(f"{p.key}: {_ts_type(p)}" for p in event.parameters)
+        fields = "; ".join(f"{p.key}{'?' if p.optional else ''}: {_ts_type(p)}" for p in event.parameters)
         out.append(f"  {event.name}: {{ {fields} }};")
     out.append("}")
     return "\n".join(out) + "\n"
@@ -1324,34 +1424,22 @@ ENTRY_POINTS = ("trackScreen", "trackImpression", "track", "setUserProperty")
 
 
 def audit(schema: Schema, roots: list[Path]) -> list[str]:
-    sites = _collect_sites(roots)
-    corpus = "\n".join(expression for _, expression, _ in sites)
+    files = _source_texts(roots)
+    sites = _collect_sites(files)
     problems: list[str] = []
 
+    # 撃っているかは、track( の中に限らずソースのどこかで出来事を作っているかで見る。
+    # 出来事を作る所と送る所は離れていることがある（`send { .paywallShown(source: $0) }`・作って返す関数）
     for event in schema.app_fired_events:
-        fired = re.search(rf"\.{event.case}\b", corpus)
-        if not fired:
-            # 共通の出来事は、アプリにその場面が無ければ撃たなくてよい（unfired_common が知らせるだけ）
-            if event.origin == "app":
-                problems.append(f"{event.name}（.{event.case}）を撃っている場所が無い")
-            continue
-        # 値はその出来事を撃っている式の中だけで探す。ほかの出来事や属性に同じ名前の値があっても数えない。
-        own = "\n".join(expression for _, expression, _ in sites if re.search(rf"\.{event.case}\b", expression))
-        for parameter in (p for p in event.parameters if p.type == "enum"):
-            literal = [v for v in parameter.values if re.search(rf"\.{lower_camel(v)}\b", own)]
-            if not literal:
-                # 値をすべて計算式で渡している。静的には確かめられないので落とさない。
-                continue
-            # 共通の値は、アプリにその入口が無いことがある。確かめるのはアプリが足した値とアプリの引数だけ
-            expected = parameter.values if parameter.origin == "app" else parameter.app_values
-            for value in expected:
-                if value not in literal:
-                    problems.append(f"{event.name}.{parameter.key} = {value} を撃っている場所が無い")
+        # 共通の出来事は、アプリにその場面が無ければ撃たなくてよい（unfired_common が知らせるだけ）
+        if event.origin == "app" and not _mentions(files, event.case):
+            problems.append(f"{event.name}（.{event.case}）を撃っている場所が無い")
 
+    problems += _audit_enum_values(schema, files)
     problems += _audit_firing_mechanism(schema, sites)
 
     for prop in schema.properties:
-        if not re.search(rf"\.{prop.case}\b", corpus):
+        if not _mentions(files, prop.case):
             problems.append(f"属性 {prop.name}（.{prop.case}）を置いている場所が無い")
 
     # 同じ発火（引数まで込みで同じもの）が 2 箇所以上に無いか
@@ -1377,12 +1465,63 @@ MECHANISM_FOR_KIND = {
 }
 
 
+def _audit_enum_values(schema: Schema, files: list[tuple[Path, str]]) -> list[str]:
+    """enum の値が撃たれているかを、**型（`type_name`）ごとに**確かめる。
+
+    値は型ごとに宣言する（`extend:` で `ScreenName` に足した `home` は `screen_viewed` にも `tapped` にも入る）ので、
+    数えるのも型ごと。その型を使う出来事のどれかの発火の式に値が直書きされていれば、撃っている。
+
+    - 確かめる値は、アプリが持つ型なら全部、共通の型ならアプリが足した値だけ
+      （共通の値は、アプリにその入口が無いことがある。`PaywallSource` の `limit` が無いアプリもある）
+    - **確かめる値が 1 つも直書きされていない型は見ない。** 値を変数で渡している（計算している）ので、静的には確かめられない。
+      共通の値（`.onboarding`）の直書きは、アプリが足した値を直書きする理由にならないので数えない
+    - 値はその出来事を作る式（`.paywallShown(…)` の括弧の中）だけで探す。ほかの出来事や属性に同じ名前の値があっても数えない
+    """
+    common_types = {
+        p.swift_type_name for e in schema.events if e.origin != "app" for p in e.parameters
+        if p.type == "enum" and p.origin != "app"
+    }
+    expected: dict[str, list[str]] = {}
+    users: dict[str, list[str]] = {}
+    for event in schema.app_fired_events:
+        for parameter in (p for p in event.parameters if p.type == "enum"):
+            name = parameter.swift_type_name
+            if name in common_types:
+                values = next(
+                    (q.app_values for e in schema.events if e.origin != "app" for q in e.parameters
+                     if q.type == "enum" and q.origin != "app" and q.swift_type_name == name),
+                    [],
+                )
+            else:
+                values = parameter.values
+            expected.setdefault(name, list(values))
+            users.setdefault(name, [])
+            where = f"{event.name}.{parameter.key}"
+            if where not in users[name]:
+                users[name].append(where)
+
+    problems: list[str] = []
+    for name, values in expected.items():
+        if not values:
+            continue
+        cases = {e.case for e in schema.app_fired_events
+                 if any(p.type == "enum" and p.swift_type_name == name for p in e.parameters)}
+        own = "\n".join(_constructions(files, cases))
+        literal = [v for v in values if re.search(rf"\.{lower_camel(v)}\b", own)]
+        if not literal:
+            continue
+        for value in values:
+            if value not in literal:
+                problems.append(f"{name}.{value} を撃っている場所が無い（{'・'.join(users[name])} のどれからも）")
+    return problems
+
+
 def unfired_common(schema: Schema, roots: list[Path]) -> list[str]:
     """共通カタログの出来事のうち、アプリがどこからも撃っていないもの。落とさず知らせるだけ。"""
-    corpus = "\n".join(expression for _, expression, _ in _collect_sites(roots))
+    files = _source_texts(roots)
     return [
         event.name for event in schema.app_fired_events
-        if event.origin != "app" and not re.search(rf"\.{event.case}\b", corpus)
+        if event.origin != "app" and not _mentions(files, event.case)
     ]
 
 
@@ -1390,30 +1529,70 @@ def _audit_firing_mechanism(schema: Schema, sites: list[tuple[str, str, str]]) -
     problems: list[str] = []
     for event in schema.app_fired_events:
         expected = MECHANISM_FOR_KIND[event.kind]
+        # track_reason のある screen / impression は track() でも撃てる（見える物が無い場所から送る）
+        allowed = {expected, "track"} if event.track_reason else {expected}
         for entry, expression, location in sites:
             if entry == "setUserProperty" or not re.search(rf"\.{event.case}\b", expression):
                 continue
-            if entry != expected:
+            if entry not in allowed:
                 problems.append(
                     f"{event.name}: kind が {event.kind} なのに {entry}() で撃っている"
-                    f"（{expected}() を使う）: {location}"
+                    f"（{expected}() を使う。使えない場所なら、カタログに track_reason で理由を書く）: {location}"
                 )
     return problems
 
 
-def _collect_sites(roots: list[Path]) -> list[tuple[str, str, str]]:
-    sites: list[tuple[str, str, str]] = []
+def _source_texts(roots: list[Path]) -> list[tuple[Path, str]]:
+    """見る Swift のファイル。生成物（頭に HEADER のあるもの・`+Generated.swift`）と `.build` は外す。
+
+    生成物は全部の出来事の case を書いているので、入れると何でも「撃っている」に見える。
+    """
+    files: list[tuple[Path, str]] = []
     for root in roots:
         for path in sorted(root.rglob("*.swift")):
             if ".build" in path.parts or path.name.endswith("+Generated.swift"):
                 continue
             text = path.read_text(encoding="utf-8")
-            for match in re.finditer(rf"\.({'|'.join(ENTRY_POINTS)})\(", text):
-                body = _balanced(text, match.end() - 1)
-                if body is None:
-                    continue
-                line = text.count("\n", 0, match.start()) + 1
-                sites.append((match.group(1), re.sub(r"\s+", "", body), f"{path}:{line}"))
+            if text.startswith(HEADER):
+                continue
+            files.append((path, text))
+    return files
+
+
+def _mentions(files: list[tuple[Path, str]], case: str) -> bool:
+    """`.case` がどこかに書かれているか（コメントは除く）。"""
+    pattern = re.compile(rf"\.{case}\b")
+    return any(pattern.search(_strip_line_comments(text)) for _, text in files)
+
+
+def _strip_line_comments(text: str) -> str:
+    return re.sub(r"//[^\n]*", "", text)
+
+
+def _constructions(files: list[tuple[Path, str]], cases: set[str]) -> list[str]:
+    """出来事を作る式 `.case(…)` の括弧の中（空白を詰めたもの）。どこに書かれていても拾う。"""
+    if not cases:
+        return []
+    pattern = re.compile(rf"\.({'|'.join(sorted(map(re.escape, cases)))})\(")
+    bodies: list[str] = []
+    for _, text in files:
+        text = _strip_line_comments(text)
+        for match in pattern.finditer(text):
+            body = _balanced(text, match.end() - 1)
+            if body is not None:
+                bodies.append(re.sub(r"\s+", "", body))
+    return bodies
+
+
+def _collect_sites(files: list[tuple[Path, str]]) -> list[tuple[str, str, str]]:
+    sites: list[tuple[str, str, str]] = []
+    for path, text in files:
+        for match in re.finditer(rf"\.({'|'.join(ENTRY_POINTS)})\(", text):
+            body = _balanced(text, match.end() - 1)
+            if body is None:
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            sites.append((match.group(1), re.sub(r"\s+", "", body), f"{path}:{line}"))
     return sites
 
 

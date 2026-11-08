@@ -15,7 +15,8 @@ public struct EnvelopeContext: Sendable, Equatable {
     public var build: String
     /// `BuildChannel`.
     public var channel: BuildChannel
-    /// The device's language (`Locale.current.language.languageCode`), such as `ja`.
+    /// The device's language as a BCP 47 tag: the language code, and the script where it tells
+    /// writings apart — `ja`, `en`, `zh-Hans`, `zh-Hant`. See ``languageTag(of:)``.
     public var lang: String
     /// The device's region (`Locale.current.region`), such as `JP`.
     public var region: String
@@ -41,9 +42,30 @@ public struct EnvelopeContext: Sendable, Equatable {
             appVersion: info["CFBundleShortVersionString"] as? String ?? "",
             build: info["CFBundleVersion"] as? String ?? "",
             channel: .current,
-            lang: locale.language.languageCode?.identifier ?? "",
+            lang: languageTag(of: locale),
             region: locale.region?.identifier ?? ""
         )
+    }
+}
+
+extension EnvelopeContext {
+
+    /// The `lang` of the envelope for a locale: the language code, followed by the script where
+    /// the script tells writings apart.
+    ///
+    /// Chinese always carries its script, so Simplified and Traditional stay apart: `zh-Hans_CN`
+    /// and `zh_CN` give `zh-Hans`, `zh-Hant_TW` and `zh_TW` give `zh-Hant`. Any other language
+    /// carries it only when it is not the language's usual one (`sr-Latn_RS` gives `sr-Latn`);
+    /// `ja_JP` gives `ja` and `en_US` gives `en`, as before. The region is not part of it: it goes
+    /// in `region`.
+    public static func languageTag(of locale: Locale) -> String {
+        guard let code = locale.language.languageCode?.identifier else { return "" }
+        guard let script = locale.language.script?.identifier else { return code }
+        let usual = Locale.Language(identifier: code).script?.identifier
+        // Foundation folds `zh-Hans_CN` into `zh_CN`, so the script has to be put back from the
+        // language rather than read from the identifier
+        guard code == "zh" || script != usual else { return code }
+        return "\(code)-\(script)"
     }
 }
 

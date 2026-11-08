@@ -69,7 +69,11 @@ struct SpoolState: Sendable {
     var generation = 0
     var isFlushing = false
     var isAutoFlushPending = false
+    /// No attempt before this: ``BatchPolicy/minimumInterval`` after the last one.
     var notBefore: Date?
+    /// No attempt before this either, because the receiver said so (`Retry-After`, `429`, `5xx`).
+    /// Kept apart so that ``AnalyticsBatchSink/flush(ignoringInterval:)`` still honours it.
+    var receiverNotBefore: Date?
 
     mutating func trim(to capacity: Int) {
         guard events.count > capacity else { return }

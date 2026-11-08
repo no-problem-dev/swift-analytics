@@ -2,7 +2,7 @@
 // 元は analytics.yaml。**先にそちらを直してから生成する。**
 
 export const CATALOG_VERSION = 1 as const;
-export const INCLUDES = [{ name: "common", version: 1 }] as const;
+export const INCLUDES = [{ name: "common", version: 2 }] as const;
 
 export const FirstOpenKind = ["fresh", "upgraded"] as const;
 export type FirstOpenKind = (typeof FirstOpenKind)[number];
@@ -12,7 +12,7 @@ export const TapTarget = ["close", "continue", "purchase", "restore", "review", 
 export type TapTarget = (typeof TapTarget)[number];
 export const OnboardingStep = ["paywall"] as const;
 export type OnboardingStep = (typeof OnboardingStep)[number];
-export const SignInProvider = ["apple", "google", "anonymous", "email"] as const;
+export const SignInProvider = ["apple", "google", "anonymous", "email", "other"] as const;
 export type SignInProvider = (typeof SignInProvider)[number];
 export const SignInSource = ["onboarding", "settings", "gate"] as const;
 export type SignInSource = (typeof SignInSource)[number];
@@ -79,7 +79,7 @@ export const EVENTS = {
   signed_in: {
     kind: "outcome", dedup: "always", origin: "common", sentBy: "app",
     parameters: {
-      provider: { type: "enum", origin: "common", values: SignInProvider, extensible: false },
+      provider: { type: "enum", origin: "common", values: SignInProvider, extensible: true },
       source: { type: "enum", origin: "common", values: SignInSource, extensible: true },
     },
   },
@@ -104,7 +104,7 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      result: { type: "enum", origin: "common", values: PaywallLoadResult, extensible: false },
+      result: { type: "enum", origin: "common", values: PaywallLoadResult, extensible: true },
       load_s: { type: "number", origin: "common" },
     },
   },
@@ -121,7 +121,7 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      to: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      to: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
     },
   },
   paywall_purchase_tapped: {
@@ -129,7 +129,7 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
       open_s: { type: "count", origin: "common" },
     },
   },
@@ -138,8 +138,8 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
-      result: { type: "enum", origin: "common", values: PurchaseResult, extensible: false },
+      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
+      result: { type: "enum", origin: "common", values: PurchaseResult, extensible: true },
       sheet_s: { type: "count", origin: "common" },
     },
   },
@@ -156,9 +156,9 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      result: { type: "enum", origin: "common", values: PaywallCloseResult, extensible: false },
-      via: { type: "enum", origin: "common", values: PaywallCloseVia, extensible: false },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      result: { type: "enum", origin: "common", values: PaywallCloseResult, extensible: true },
+      via: { type: "enum", origin: "common", values: PaywallCloseVia, extensible: true },
+      product: { type: "enum", origin: "common", optional: true, values: PlanPeriod, extensible: true },
       open_s: { type: "count", origin: "common" },
     },
   },
@@ -167,14 +167,14 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
     },
   },
   restore_completed: {
     kind: "outcome", dedup: "always", origin: "common", sentBy: "app",
     parameters: {
-      source: { type: "enum", origin: "common", values: RestoreSource, extensible: false },
-      result: { type: "enum", origin: "common", values: RestoreResult, extensible: false },
+      source: { type: "enum", origin: "common", values: RestoreSource, extensible: true },
+      result: { type: "enum", origin: "common", values: RestoreResult, extensible: true },
     },
   },
   review_requested: {
@@ -195,7 +195,7 @@ export const EVENTS = {
       release: { type: "token", origin: "common", pattern: "[0-9]{1,3}(\\.[0-9]{1,3}){1,2}", maxLength: 64 },
       page: { type: "count", origin: "common" },
       pages: { type: "count", origin: "common" },
-      via: { type: "enum", origin: "common", values: WhatsNewCloseVia, extensible: false },
+      via: { type: "enum", origin: "common", values: WhatsNewCloseVia, extensible: true },
     },
   },
   entry_saved: {
@@ -203,6 +203,7 @@ export const EVENTS = {
     parameters: {
       screen: { type: "enum", origin: "app", values: ScreenName, extensible: true },
       words: { type: "bucket", origin: "app", edges: [1, 50, 200], values: ["0", "1_49", "50_199", "200_plus"] },
+      streak: { type: "bucket", origin: "app", optional: true, edges: [1, 2, 10], values: ["0", "1", "2_9", "10+"] },
     },
   },
 } as const;
@@ -212,7 +213,7 @@ export const EVENT_NAMES = Object.keys(EVENTS) as EventName[];
 export const COMMON_EVENT_NAMES = ["first_open", "internal_device", "screen_viewed", "tapped", "onboarding_step", "onboarding_completed", "signed_in", "experiment_assigned", "paywall_shown", "paywall_loaded", "paywall_scrolled", "paywall_plan_selected", "paywall_purchase_tapped", "paywall_purchase_result", "paywall_backgrounded", "paywall_closed", "purchase_completed", "restore_completed", "review_requested", "whats_new_shown", "whats_new_closed"] as const satisfies readonly EventName[];
 export type CommonEventName = (typeof COMMON_EVENT_NAMES)[number];
 
-/** 出来事ごとの `props` の型。生成した Swift は引数を全部埋めて送る。 */
+/** 出来事ごとの `props` の型。生成した Swift は引数を全部埋めて送る（`?` の付いた任意の引数は、値が無ければ載らない）。 */
 export interface EventProps {
   first_open: { kind: FirstOpenKind };
   internal_device: Record<string, never>;
@@ -229,11 +230,11 @@ export interface EventProps {
   paywall_purchase_tapped: { source: PaywallSource; pw_id: string; product: PlanPeriod; open_s: number };
   paywall_purchase_result: { source: PaywallSource; pw_id: string; product: PlanPeriod; result: PurchaseResult; sheet_s: number };
   paywall_backgrounded: { source: PaywallSource; pw_id: string; open_s: number };
-  paywall_closed: { source: PaywallSource; pw_id: string; result: PaywallCloseResult; via: PaywallCloseVia; product: PlanPeriod; open_s: number };
+  paywall_closed: { source: PaywallSource; pw_id: string; result: PaywallCloseResult; via: PaywallCloseVia; product?: PlanPeriod; open_s: number };
   purchase_completed: { source: PaywallSource; pw_id: string; product: PlanPeriod };
   restore_completed: { source: RestoreSource; result: RestoreResult };
   review_requested: { moment: ReviewMomentName };
   whats_new_shown: { release: string };
   whats_new_closed: { release: string; page: number; pages: number; via: WhatsNewCloseVia };
-  entry_saved: { screen: ScreenName; words: "0" | "1_49" | "50_199" | "200_plus" };
+  entry_saved: { screen: ScreenName; words: "0" | "1_49" | "50_199" | "200_plus"; streak?: "0" | "1" | "2_9" | "10+" };
 }

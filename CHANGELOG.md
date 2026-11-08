@@ -2,6 +2,72 @@
 
 ## [Unreleased]
 
+Fixes asked for by the apps that started on 0.3.0 (kotoakari, stock-radar, jibun-bgm, kokoiine,
+gamification_app). Nothing a 0.3.0 app wrote stops compiling; regenerate the catalog after
+upgrading, since the common catalog is now version 2 and `check` will say the outputs are stale.
+
+### Added
+
+- Generator: `optional: true` on a parameter. The Swift parameter becomes `T? = nil` and can be left
+  out; `nil` is not put in `props`. `--json` marks it `"optional": true`, `--ts` writes `key?:`. An
+  app can make a common parameter optional through `extend:` (never the reverse)
+- Generator: `labels:` on a `bucket` (parameter or property) names the bands, for receivers that
+  already read their own names (`["0", "1", "2_9", "10+"]`). One more label than edges
+- Generator: `track_reason:` on a `screen` or `impression` event (in `events:`, or in `extend:` for a
+  common one) lets `audit` accept `track()` for it, where no view can fire `trackImpression`
+  (a sheet's callback, a notice being shown)
+- Generator: `swift.descriptions: false` leaves the catalog's `description` and `trigger` out of the
+  generated Swift's doc comments
+- `AnalyticsValue.bucket(_:edges:labels:)`
+- `OccurrenceCount` — how many times something happened on this install (`paywall_shown.nth`):
+  `next(_:)`, `current(_:)`, `reset(_:)`, `resetAll()`
+- `AnalyticsSwitch.setEnabled(_:) -> Task<Void, Never>`, the synchronous overload: the stop takes
+  effect before it returns, and only the erasure runs in the returned task. The `async` overload is
+  unchanged
+- `InstallID.adopt(_:)` — keep the install ID an earlier version used, when none is stored yet
+- `AnalyticsEvent.occurredAt` (defaults to `nil`) and `occurred(at:)` / `DatedEvent`: an occurrence
+  held back and tracked later keeps the time it happened; `AnalyticsBatchSink` writes it as
+  `occurred_at`
+- `AnalyticsBatchSink.flush(ignoringInterval:)` — for the move to the background: skips
+  `minimumInterval`, still honours a wait the receiver asked for
+- `FirstLaunch.recordLaunch(…, sentBefore:)` — the app already sent `first_open` by its own rule
+- `AnalyticsInternalDevice.mark(…, sendAgain:)` — send `internal_device` again (a new uid on a
+  marked device)
+- `EnvelopeContext.languageTag(of:)`
+
+### Changed
+
+- Common catalog version 2: `paywall_closed.product` is optional (not there when closed without
+  buying, or when plans could not be read). `signed_in.provider` gains `other`. Every common enum but
+  `FirstOpenKind` is `extensible: true`, so apps can add values to `PaywallCloseResult`,
+  `PaywallCloseVia`, `PlanPeriod`, `PurchaseResult`, `RestoreResult`, `SignInProvider`, and the rest.
+  `paywall_closed.result` still has no `failed`: a failed purchase leaves the paywall open, and is
+  counted by `paywall_purchase_result(result: failed)`. Descriptions are reworded
+- `audit` counts enum values per type (`type_name`), across every event that uses the type, instead
+  of per event. A value added to `ScreenName` is fired when any of `screen_viewed`, `tapped`, or an
+  app event using `ScreenName` writes it
+- `audit` checks a type's values only when one of the values it checks (all of an app type's, the
+  app's added values of a common type) is written literally. A common value written literally
+  (`source: .onboarding`) no longer demands that the app's values be literal too
+- `audit` finds an event wherever it is built (`.paywallShown(…)` in a closure, a function that
+  returns it, `trackImpression(shown)`), not only inside `track(…)`. Generated files (those starting
+  with the generator's header) and `//` comments are not read
+- Envelope `lang` is a BCP 47 language tag: Chinese carries its script (`zh-Hans`, `zh-Hant`), and
+  other languages only an unusual script (`sr-Latn`). `ja`, `en`, and the like are unchanged
+- `AnalyticsBatchSink`: a wait from `Retry-After` / `429` / `5xx` is kept apart from the spacing
+  between attempts (so `flush(ignoringInterval:)` can honour one and skip the other)
+
+### Deprecated
+
+- `InternalDevice` is renamed `AnalyticsInternalDevice`, because apps have an `InternalDevice` of
+  their own and a file importing both could not name either. The old name is a deprecated alias,
+  removed in 0.4.0 — only then does the clash end; until then, qualify the app's own type
+
+### Removed
+
+- The `swift-docc-plugin` dependency. Apps no longer resolve it (and `swift-docc-symbolkit`);
+  Xcode's Build Documentation does not need it
+
 ## [0.3.0] - 2026-11-08
 
 One shared catalog and one envelope for every app. **Contains breaking changes** (see Removed and

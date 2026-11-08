@@ -69,6 +69,26 @@ struct CommonCatalogTests {
         #expect(event.kind == .impression)
     }
 
+    @Test("任意の引数は省いて呼べ、nil なら props に載らない")
+    func optionalParameterIsLeftOut() throws {
+        let pwID = try #require(JournalEvent.PwId("0a1b2c3d"))
+        let dismissed = JournalEvent.paywallClosed(source: .settings, pwId: pwID, result: .dismissed, via: .closeButton, openS: 4)
+        #expect(dismissed.parameters == [
+            "source": .text("settings"), "pw_id": .text("0a1b2c3d"), "result": .text("dismissed"),
+            "via": .text("close_button"), "open_s": .count(4),
+        ])
+        let purchased = JournalEvent.paywallClosed(source: .settings, pwId: pwID, result: .purchased, via: .auto, product: .yearly, openS: 9)
+        #expect(purchased.parameters["product"] == .text("yearly"))
+    }
+
+    @Test("labels を書いた bucket はその名前で載る")
+    func labelledBucket() {
+        let event = JournalEvent.entrySaved(screen: .home, words: 3, streak: 12)
+        #expect(event.parameters["streak"] == .text("10+"))
+        #expect(event.parameters["words"] == .text("1_49"))
+        #expect(JournalEvent.entrySaved(screen: .home, words: 3).parameters["streak"] == nil)
+    }
+
     @Test("お知らせの版の token は「1.2」「1.2.3」の形だけを通す")
     func releaseTokenFollowsItsPattern() {
         #expect(JournalEvent.Release("1.2") != nil)

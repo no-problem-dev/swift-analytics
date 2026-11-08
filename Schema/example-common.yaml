@@ -40,3 +40,9 @@ events:
       words:
         type: bucket
         edges: [1, 50, 200]
+      streak:
+        type: bucket
+        edges: [1, 2, 10]
+        labels: ["0", "1", "2_9", "10+"]
+        description: 続けた日の帯（受け手が読んでいる名前で送る）
+        optional: true

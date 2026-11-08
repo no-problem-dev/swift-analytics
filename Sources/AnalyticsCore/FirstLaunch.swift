@@ -25,13 +25,18 @@ public enum FirstLaunch {
     ///   - analytics: Where `first_open` goes
     ///   - hasPriorData: The app already holds data from an earlier version (a database, a
     ///     settings key). Pass it for apps that never stamped with `FirstLaunch` before
+    ///   - sentBefore: The app sent its own `first_open` before it used this package, by its own
+    ///     rule (a key of its own). `true` records that it was sent and sends nothing, so moving
+    ///     onto the package does not count the install twice
     ///   - defaults: Where the stamps are kept
     ///   - now: The current time, left injectable so tests can hold it still
-    /// - Returns: The kind sent this time, or `nil` when `first_open` had been sent before
+    /// - Returns: The kind sent this time, or `nil` when `first_open` had been sent before (here, or
+    ///   by the app as `sentBefore` says)
     @discardableResult
     public static func recordLaunch(
         sendingTo analytics: any AnalyticsClient,
         hasPriorData: Bool = false,
+        sentBefore: Bool = false,
         defaults: UserDefaults = .standard,
         now: Date = Date()
     ) -> FirstOpenKind? {
@@ -41,6 +46,7 @@ public enum FirstLaunch {
         }
         guard !defaults.bool(forKey: openKey) else { return nil }
         defaults.set(true, forKey: openKey)
+        guard !sentBefore else { return nil }
         let kind: FirstOpenKind = (wasStamped || hasPriorData) ? .upgraded : .fresh
         analytics.track(CommonEvent.firstOpen(kind: kind))
         return kind

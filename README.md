@@ -37,7 +37,7 @@ mistake. This package puts the counting rule in the vocabulary.
 - **The receiver gets the same catalog.** `--json` and `--ts` write the catalog for the server
   (a Cloudflare Worker, a dashboard) to check against and import
 - **The install and the build, done once.** `InstallID`, `BuildChannel` (debug / TestFlight /
-  App Store), `FirstLaunch` (sends `first_open{kind: fresh|upgraded}` once), and `InternalDevice`
+  App Store), `FirstLaunch` (sends `first_open{kind: fresh|upgraded}` once), and `AnalyticsInternalDevice`
   (marks the makers' own devices once)
 - **An off switch that remembers.** `AnalyticsSwitch` drops everything while the person has turned
   measurement off, keeps that choice across launches, and erases what was buffered

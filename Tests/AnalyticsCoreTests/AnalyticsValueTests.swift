@@ -4,6 +4,19 @@ import Testing
 @Suite("送れる値")
 struct AnalyticsValueTests {
 
+    @Test("帯の名前をアプリが決められる（1つ目は一番下の境界より下）")
+    func labelledBuckets() {
+        let edges = [1, 2, 10]
+        let labels = ["0", "1", "2_9", "10+"]
+        #expect(AnalyticsValue.bucket(-4, edges: edges, labels: labels) == .text("0"))
+        #expect(AnalyticsValue.bucket(1, edges: edges, labels: labels) == .text("1"))
+        #expect(AnalyticsValue.bucket(9, edges: edges, labels: labels) == .text("2_9"))
+        #expect(AnalyticsValue.bucket(10, edges: edges, labels: labels) == .text("10+"))
+        #expect(AnalyticsValue.bucket(3, edges: [10, 2, 1], labels: labels) == .text("2_9"))
+        // 数が合わなければ、ほかの帯の名前で送らずに既定の名前へ戻す
+        #expect(AnalyticsValue.bucket(3, edges: edges, labels: ["a"]) == .text("2_9"))
+    }
+
     @Test("帯は境界の下側に入る")
     func bucketsByLowerBound() {
         let edges = [1, 6, 16]

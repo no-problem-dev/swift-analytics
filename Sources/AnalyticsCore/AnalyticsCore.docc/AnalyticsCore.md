@@ -25,7 +25,7 @@ first-party receiver. ``AnalyticsSwitch`` goes in front of all of them, as the p
 
 What every app shares about its install lives here too: ``InstallID`` (the `install_id` of every
 batch), ``BuildChannel`` (debug, TestFlight, or the App Store), ``FirstLaunch`` (which sends
-`first_open` once), and ``InternalDevice`` (which marks the makers' own devices). The two events
+`first_open` once), and ``AnalyticsInternalDevice`` (which marks the makers' own devices). The two events
 this package sends itself are ``CommonEvent``; every other event comes from the app's generated
 catalog, which includes the common one (`Schema/common/common.yaml`).
 
@@ -68,5 +68,6 @@ The two rules that make the numbers trustworthy are written up separately:
 - ``FirstOpenKind``
 - ``InstallID``
 - ``BuildChannel``
-- ``InternalDevice``
+- ``AnalyticsInternalDevice``
+- ``OccurrenceCount``
 - ``CommonEvent``

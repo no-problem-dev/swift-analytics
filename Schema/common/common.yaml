@@ -3,13 +3,15 @@
 # 名前・引数・値を変えるときは、受ける側（集計の SQL）も同じ変更で直す。catalogVersion を上げる。
 #
 # 決まり:
-# - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）
+# - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）。
+#   FirstOpenKind 以外の enum は足せる。FirstOpenKind は AnalyticsCore が送る値なので足せない
 # - 引数はアプリが足してよい（共通の引数は消せない・型は変えられない）
+# - `optional: true` の引数は値が無いことがある。生成物は Optional で、nil なら props に載らない
 # - 時刻・人・アプリの版などは封筒（Envelope）が持つ。出来事の引数に入れない
-# - `sent_by: package` の出来事は AnalyticsCore が自分で送る（FirstLaunch・InternalDevice）。
+# - `sent_by: package` の出来事は AnalyticsCore が自分で送る（FirstLaunch・AnalyticsInternalDevice）。
 #   アプリの生成物の Swift には出さず、--json と --ts にだけ載る
 
-version: 1
+version: 2
 name: common
 dialect: envelope
 
@@ -33,7 +35,7 @@ events:
     dedup: install
     sent_by: package
     description: 作り手の端末。集計から外す
-    trigger: 隠しスイッチを入れたとき（InternalDevice.mark が保存して1回だけ送る）
+    trigger: 隠しスイッチを入れたとき（AnalyticsInternalDevice.mark が保存して1回だけ送る）
 
   - name: screen_viewed
     kind: screen
@@ -51,7 +53,7 @@ events:
     kind: interaction
     dedup: always
     description: 計測すると決めたボタンを押した
-    trigger: 押した瞬間
+    trigger: ボタンを押したとき
     parameters:
       target:
         type: enum
@@ -93,7 +95,9 @@ events:
       provider:
         type: enum
         type_name: SignInProvider
-        values: [apple, google, anonymous, email]
+        extensible: true
+        values: [apple, google, anonymous, email, other]
+        description: other = 上のどれでもないサインインの方法
       source:
         type: enum
         type_name: SignInSource
@@ -116,14 +120,14 @@ events:
   - name: paywall_shown
     kind: impression
     dedup: always
-    description: ペイウォールが描かれた
+    description: ペイウォールが表示された
     parameters:
       source:
         type: enum
         type_name: PaywallSource
         extensible: true
         values: [onboarding, settings, limit]
-        description: どの入口から開いたか
+        description: どこから開いたか
       pw_id:
         type: token
         pattern: "[a-f0-9]{8}"
@@ -131,7 +135,7 @@ events:
       nth:
         type: bucket
         edges: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-        description: このインストールで何回目の表示か
+        description: このインストールで何回目の表示か（OccurrenceCount.next("paywall_shown") で数える）
 
   - name: paywall_loaded
     kind: outcome
@@ -143,6 +147,7 @@ events:
       result:
         type: enum
         type_name: PaywallLoadResult
+        extensible: true
         values: [ok, unavailable]
       load_s:
         type: number
@@ -171,6 +176,7 @@ events:
       to:
         type: enum
         type_name: PlanPeriod
+        extensible: true
         values: [yearly, monthly, weekly, lifetime]
 
   - name: paywall_purchase_tapped
@@ -180,7 +186,7 @@ events:
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product: { type: enum, type_name: PlanPeriod, extensible: true, values: [yearly, monthly, weekly, lifetime] }
       open_s: { type: count, description: 開いてから押すまでの秒 }
 
   - name: paywall_purchase_result
@@ -190,10 +196,11 @@ events:
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product: { type: enum, type_name: PlanPeriod, extensible: true, values: [yearly, monthly, weekly, lifetime] }
       result:
         type: enum
         type_name: PurchaseResult
+        extensible: true
         values: [purchased, cancelled, pending, failed]
       sheet_s: { type: count, description: 押してから結果が返るまでの秒 }
 
@@ -210,28 +217,38 @@ events:
     kind: outcome
     dedup: always
     description: ペイウォールを閉じた
+    # 購入の失敗は result に持たない。失敗はシートの中の出来事で、ペイウォールはそのまま開いている。
+    # 失敗は paywall_purchase_result(result=failed) で数え、その後に閉じたら dismissed になる
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
       result:
         type: enum
         type_name: PaywallCloseResult
+        extensible: true
         values: [purchased, restored, dismissed]
       via:
         type: enum
         type_name: PaywallCloseVia
+        extensible: true
         values: [close_button, later, continue_free, auto, swipe_down]
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product:
+        type: enum
+        type_name: PlanPeriod
+        extensible: true
+        values: [yearly, monthly, weekly, lifetime]
+        optional: true
+        description: 買った・復元したプラン。買わずに閉じたとき・プランを読めなかったときは無い
       open_s: { type: count }
 
   - name: purchase_completed
     kind: outcome
     dedup: always
-    description: 画面の上で購入が成立した（壁ごとの転換に使う。売上と継続の正本は RevenueCat）
+    description: ペイウォールの上で購入が成立した（ペイウォールごとの転換に使う。売上と継続の数字は RevenueCat から読む）
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product: { type: enum, type_name: PlanPeriod, extensible: true, values: [yearly, monthly, weekly, lifetime] }
 
   - name: restore_completed
     kind: outcome
@@ -241,10 +258,12 @@ events:
       source:
         type: enum
         type_name: RestoreSource
+        extensible: true
         values: [paywall, settings]
       result:
         type: enum
         type_name: RestoreResult
+        extensible: true
         values: [restored, nothing_to_restore, failed]
 
   # ---- 評価とお知らせ ----
@@ -281,4 +300,5 @@ events:
       via:
         type: enum
         type_name: WhatsNewCloseVia
+        extensible: true
         values: [close_button, finished, swipe_down]

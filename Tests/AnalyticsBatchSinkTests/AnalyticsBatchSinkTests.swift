@@ -224,6 +224,64 @@ struct AnalyticsBatchSinkTests {
         #expect(report.remaining == 1)
     }
 
+    @Test("裏に回るときの flush(ignoringInterval: true) は間隔を待たずに送る")
+    func backgroundFlushSkipsTheInterval() async {
+        let rig = Rig()
+        let sink = rig.sink()
+
+        sink.track(Event(name: "a"))
+        await sink.flush()
+        rig.clock.advance(by: 5)
+        sink.track(Event(name: "b"))
+        let report = await sink.flush(ignoringInterval: true)
+
+        #expect(report == FlushReport(status: .emptied, delivered: 1, discarded: 0, remaining: 0))
+        #expect(rig.sender.names == [["a"], ["b"]])
+    }
+
+    @Test("間隔を無視しても、受け手が頼んだ待ち（Retry-After）は守る")
+    func backgroundFlushHonoursRetryAfter() async {
+        let rig = Rig()
+        rig.sender.script([429], retryAfter: "120")
+        let sink = rig.sink()
+
+        sink.track(Event(name: "tapped"))
+        await sink.flush()
+        rig.clock.advance(by: 10)
+        let report = await sink.flush(ignoringInterval: true)
+
+        #expect(report.status == .throttled(until: Rig.start.addingTimeInterval(120)))
+        #expect(rig.sender.requests.count == 1)
+    }
+
+    @Test("occurred(at:) で作った出来事は、その時刻で occurred_at に載る")
+    func usesTheTimeTheEventCarries() async throws {
+        let rig = Rig()
+        let sink = rig.sink()
+
+        let earlier = Rig.start.addingTimeInterval(-3)
+        sink.track(Event(name: "onboarding_step").occurred(at: earlier))
+        sink.track(Event(name: "now"))
+        await sink.flush()
+
+        let events = try #require(try rig.sender.json(at: 0)["events"] as? [[String: Any]])
+        #expect(events[0]["name"] as? String == "onboarding_step")
+        #expect(events[0]["occurred_at"] as? Int == Rig.startMilliseconds - 3_000)
+        #expect(events[1]["occurred_at"] as? Int == Rig.startMilliseconds)
+    }
+
+    @Test("lang は BCP 47 の言語の札（簡体字と繁体字を分ける・地域は入れない）")
+    func languageTags() {
+        let tag = { EnvelopeContext.languageTag(of: Locale(identifier: $0)) }
+        #expect(tag("ja_JP") == "ja")
+        #expect(tag("en_US") == "en")
+        #expect(tag("pt_BR") == "pt")
+        #expect(tag("zh-Hans_CN") == "zh-Hans")
+        #expect(tag("zh-Hant_TW") == "zh-Hant")
+        #expect(tag("zh_TW") == "zh-Hant")
+        #expect(tag("sr-Latn_RS") == "sr-Latn")
+    }
+
     @Test("溜めた物は作り直した sink（次の起動）が読み、送る")
     func survivesRelaunch() async throws {
         let rig = Rig()
