@@ -91,7 +91,9 @@ and the point of the scope is that the call site never has to think about it.
 `session` and `install` remember an event by ``AnalyticsEvent/dedupKey``, which defaults to the
 event's name and deliberately ignores parameters. "Responded to a notification prompt for the first
 time" is once, not once per prompt stage. Override `dedupKey` on the conforming type only when you
-genuinely want one occurrence per parameter value.
+genuinely want one occurrence per parameter value. It is a protocol requirement, so the override is
+what ``DedupingAnalytics`` reads even though it holds the event as `any AnalyticsEvent` (before 0.3
+it was an extension member only, and an override on the type was ignored).
 
 User properties are never deduplicated. A property is a statement about the current state, so
 setting the same value twice changes nothing, and suppressing a repeat would leave a stale value in

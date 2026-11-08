@@ -87,9 +87,33 @@ struct DedupingAnalyticsTests {
 
         #expect(recorder.propertyLines == ["plan=free", "plan=free"])
     }
+
+    @Test("型が書いた dedupKey が、any AnalyticsEvent 越しにも効く")
+    func honoursDedupKeyWrittenOnTheType() {
+        let recorder = RecordingAnalytics()
+        let analytics = DedupingAnalytics(recorder, defaults: makeDefaults())
+
+        analytics.track(StagedEvent(stage: "goal"))
+        analytics.track(StagedEvent(stage: "goal"))
+        analytics.track(StagedEvent(stage: "time"))
+
+        #expect(recorder.count(of: "ob_step_viewed") == 2)
+        let erased: any AnalyticsEvent = StagedEvent(stage: "goal")
+        #expect(erased.dedupKey == "ob_step_viewed.goal")
+    }
 }
 
 // MARK: - Minimal conformances for the tests
+
+/// A type that counts each stage once — the case tsumofu had to work around in 0.2.
+private struct StagedEvent: AnalyticsEvent {
+    let stage: String
+    var name: String { "ob_step_viewed" }
+    var parameters: [String: AnalyticsValue] { ["stage": .text(stage)] }
+    var kind: EventKind { .screen }
+    var dedup: DedupScope { .install }
+    var dedupKey: String { "\(name).\(stage)" }
+}
 
 private struct TestEvent: AnalyticsEvent {
     let name: String

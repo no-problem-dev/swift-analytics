@@ -23,6 +23,12 @@ destinations are supplied by the composition root: ``ConsoleAnalytics`` during d
 builds either a vendor adapter such as `swift-analytics-firebase` or `AnalyticsBatchSink` for a
 first-party receiver. ``AnalyticsSwitch`` goes in front of all of them, as the person's off switch.
 
+What every app shares about its install lives here too: ``InstallID`` (the `install_id` of every
+batch), ``BuildChannel`` (debug, TestFlight, or the App Store), ``FirstLaunch`` (which sends
+`first_open` once), and ``InternalDevice`` (which marks the makers' own devices). The two events
+this package sends itself are ``CommonEvent``; every other event comes from the app's generated
+catalog, which includes the common one (`Schema/common/common.yaml`).
+
 The two rules that make the numbers trustworthy are written up separately:
 <doc:CountingRules> explains what "seen" means and how each deduplication scope behaves, and
 <doc:WhatNotToSend> explains why domain facts and free-form strings stay out of the stream.
@@ -56,6 +62,11 @@ The two rules that make the numbers trustworthy are written up separately:
 - ``ConsoleAnalytics``
 - ``NoopAnalytics``
 
-### Install age
+### The install and the build
 
 - ``FirstLaunch``
+- ``FirstOpenKind``
+- ``InstallID``
+- ``BuildChannel``
+- ``InternalDevice``
+- ``CommonEvent``

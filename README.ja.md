@@ -27,9 +27,15 @@
   シミュレータも実時間の待ちもなしにユニットテストで固定できます
 - **grep では書けない CI 監査。** 宣言だけで撃たれていない出来事・同じ発火が 2 箇所にあること・
   カタログを迂回した文字列直書きを、すべてビルドで落とします
-- **自前の送り先も選べる。** `AnalyticsBatchSink` が端末のファイルに溜めて、アプリが書いた送信の処理で
-  まとめて送ります。生成器の `first_party` 方言は受け口の列の上限でカタログを検査し、受け口のための
-  カタログを JSON でも書き出します
+- **共通のカタログと、1 つの封筒。** どのアプリにもある出来事（`first_open`・`paywall_*`・`purchase_completed`・
+  `review_requested`・`whats_new_*` など）は `Schema/common/common.yaml` が持ちます。アプリのカタログは
+  `include: common` で取り込み、自分の値は `extend:` で足します。名前を手で写しません。
+  `AnalyticsBatchSink` はどのアプリの出来事も同じ封筒（`Schema/common/ENVELOPE.md`）で送ります。
+  アプリが渡すのは URL・認証のクロージャ・アプリの名前だけです
+- **受け口も同じカタログを使う。** `--json` と `--ts` で、サーバー（Cloudflare Worker・studio）が照らし合わせ、
+  import するカタログを書き出します
+- **インストールとビルドの扱いを 1 か所に。** `InstallID`・`BuildChannel`（debug / TestFlight / App Store）・
+  `FirstLaunch`（`first_open{kind: fresh|upgraded}` を 1 回送る）・`InternalDevice`（作り手の端末の印を 1 回送る）
 - **覚えている止めスイッチ。** `AnalyticsSwitch` は、本人が止めている間のすべてを捨て、その選択を
   起動をまたいで覚え、溜めた物を消します
 - **外部依存ゼロ。** SwiftPM は依存をパッケージ単位で解決するので、vendor の SDK（Firebase / PostHog）は
@@ -43,22 +49,42 @@
 ```yaml
 # analytics.yaml
 version: 1
-dialect: ga4
+dialect: envelope
+include: common             # first_open・paywall_*・review_requested など
 swift:
   event_type: AppEvent
 
+extend:
+  - name: screen_viewed
+    parameters:
+      screen:
+        values: [home]      # extensible な共通の enum に値を足す
+
 events:
-  - name: paywall_shown
-    kind: impression        # screen | impression | interaction | outcome
+  - name: entry_saved
+    kind: outcome           # screen | impression | interaction | outcome
     dedup: always           # session | install | always
-    description: 課金の案内が実際に見えた
+    description: 日記を保存した
 ```
 
 Swift を生成し、**生成物はコミットします**。計測の変更は「何を測ることにしたか」の変更であり、
 差分が唯一のレビュー材料だからです。
 
 ```sh
-Scripts/analytics-gen.py generate --schema analytics.yaml --out Sources/App/Generated/AppAnalytics.swift
+Scripts/analytics-gen.py generate --schema analytics.yaml --out Sources/App/Generated/AppAnalytics.swift \
+  --json server/catalog.json --ts server/catalog.ts
+```
+
+送り先は起動時に 1 回だけつなぎます。
+
+```swift
+let sink = AnalyticsBatchSink(
+    app: "kotoakari",
+    endpoint: URL(string: "https://api.example.com/v1/events")!,
+    authorize: { ["Authorization": "Bearer \(try await auth.idToken())"] }
+)
+let analytics = AnalyticsSwitch(DedupingAnalytics(sink)) { await sink.purge() }
+FirstLaunch.recordLaunch(sendingTo: analytics)
 ```
 
 発火点はこれだけです。
@@ -66,29 +92,27 @@ Scripts/analytics-gen.py generate --schema analytics.yaml --out Sources/App/Gene
 ```swift
 import AnalyticsSwiftUI
 
-PaywallView().trackScreen(.paywallShown)
+HomeView().trackScreen(.screenViewed(screen: .home))
 ```
 
 ## ドキュメント
 
-[**API リファレンスとガイド**](https://no-problem-dev.github.io/swift-analytics/documentation/) —
-[Getting Started](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/gettingstarted/)、
-[Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/)、
-[What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/) を含みます。
+API リファレンスとガイド（Getting Started・Counting Rules・What Not to Send）は `Sources/*/*.docc/` の DocC にあります。Xcode の Product › Build Documentation で開けます。
 
-カタログの書式（`first_party` 方言・`token` 型・`--json` の形を含む）は [Schema/SCHEMA.md](./Schema/SCHEMA.md) が仕様です。
+カタログの書式（`include` と `extend`・方言・`token` 型・`--json` と `--ts` の形を含む）は [Schema/SCHEMA.md](./Schema/SCHEMA.md) が仕様です。
+封筒は [Schema/common/ENVELOPE.md](./Schema/common/ENVELOPE.md) です。
 
 ## 導入
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.3.0"))
 ```
 
 | プロダクト | 中身 | 依存 |
 |---|---|---|
 | `AnalyticsCore` | 語彙・ポート・数え方 | なし |
 | `AnalyticsSwiftUI` | 画面から撃つ層・端末で読むログ | SwiftUI |
-| `AnalyticsBatchSink` | 端末に溜めて、自前のサーバーへまとめて送る | `AnalyticsCore` |
+| `AnalyticsBatchSink` | 端末に溜めて、固定の封筒で自前のサーバーへまとめて送る | `AnalyticsCore` |
 | `AnalyticsTesting` | テストの土台 | なし |
 
 送信先のアダプタは別パッケージです（[swift-analytics-firebase](https://github.com/no-problem-dev/swift-analytics-firebase)）。

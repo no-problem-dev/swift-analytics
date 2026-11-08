@@ -3,9 +3,12 @@
 
 スキーマの仕様は ``Schema/SCHEMA.md``。
 
-    analytics-gen.py generate --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json]
-    analytics-gen.py check    --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json]
+    analytics-gen.py generate --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json] [--ts catalog.ts]
+    analytics-gen.py check    --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json] [--ts catalog.ts]
     analytics-gen.py audit    --schema analytics.yaml --sources Sources/
+
+`include: common` のカタログは、このパッケージの ``Schema/common/common.yaml`` を取り込む。
+別の場所のものを使うときは ``--common <path>``。
 
 **生成は人の手元で走らせ、生成物をコミットする。** ビルド時に生成しないのは、計測の変更が
 「何を測ることにしたか」の変更であり、**差分が唯一のレビュー材料**だから。生成物が
@@ -52,8 +55,19 @@ FIRST_PARTY_NUMBER_LIMIT = 1
 FIRST_PARTY_TOKEN_LIMIT = 2
 FIRST_PARTY_VALUE_LIMIT = 64
 
-DIALECTS = {"ga4", "first_party"}
-VALUE_LIMITS = {"ga4": GA4_VALUE_LIMIT, "first_party": FIRST_PARTY_VALUE_LIMIT}
+# 固定の封筒（Schema/common/ENVELOPE.md）で送る受け口。`props` は JSON の 1 段のマップなので、
+# 列の割り当てから来る数の上限（first_party）は無い。名前と値の形は first_party と同じ。
+ENVELOPE_VALUE_LIMIT = 64
+
+DIALECTS = {"ga4", "first_party", "envelope"}
+VALUE_LIMITS = {"ga4": GA4_VALUE_LIMIT, "first_party": FIRST_PARTY_VALUE_LIMIT, "envelope": ENVELOPE_VALUE_LIMIT}
+
+# `include:` で取り込めるカタログ。名前からパッケージの中の場所を引く（`--common` で替えられる）。
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+INCLUDABLE = {"common": PACKAGE_ROOT / "Schema" / "common" / "common.yaml"}
+
+# 共通の出来事のうち、パッケージ（AnalyticsCore）が自分で送るもの。アプリの Swift には出さない。
+SENT_BY = {"app", "package"}
 
 KINDS = {"screen", "impression", "interaction", "outcome"}
 SCOPES = {"session", "install", "always"}
@@ -105,10 +119,14 @@ def parse_yaml(text: str) -> dict:
 
 
 def _strip_comment(raw: str) -> str:
-    out, quote = [], None
+    out, quote, escaped = [], None, False
     for char in raw:
         if quote:
-            if char == quote:
+            if escaped:
+                escaped = False
+            elif quote == '"' and char == "\\":
+                escaped = True
+            elif char == quote:
                 quote = None
         elif char in "\"'":
             quote = char
@@ -124,6 +142,12 @@ def _parse_block(lines, index: int, indent: int):
     if lines[index][1].startswith("- "):
         return _parse_list(lines, index, indent)
     return _parse_map(lines, index, indent)
+
+
+def _put(result: dict, key: str, value, number: int) -> None:
+    if key in result:
+        raise SchemaError(f"{number} 行目: 鍵 {key} が同じ場所に 2 回ある")
+    result[key] = value
 
 
 def _parse_map(lines, index: int, indent: int):
@@ -142,10 +166,10 @@ def _parse_map(lines, index: int, indent: int):
         key, rest = key.strip(), rest.strip()
         index += 1
         if rest:
-            result[key] = _scalar(rest, number)
+            _put(result, key, _scalar(rest, number), number)
         else:
             child, index = _parse_block(lines, index, indent + 2)
-            result[key] = child if child is not None else {}
+            _put(result, key, child if child is not None else {}, number)
     return result, index
 
 
@@ -159,7 +183,7 @@ def _parse_list(lines, index: int, indent: int):
             raise SchemaError(f"{number} 行目: 予期しない字下げ（{content}）")
         item = content[2:].strip()
         index += 1
-        if ":" in item and not item.startswith(("\"", "'", "[")):
+        if ":" in item and not item.startswith(("\"", "'", "[", "{")):
             # `- key: value` から始まるマップ。続く行を同じ深さの続きとして読む
             key, _, rest = item.partition(":")
             entry: dict = {}
@@ -169,7 +193,8 @@ def _parse_list(lines, index: int, indent: int):
                 child, index = _parse_block(lines, index, indent + 4)
                 entry[key.strip()] = child if child is not None else {}
             rest_map, index = _parse_map(lines, index, indent + 2)
-            entry.update(rest_map)
+            for rest_key, rest_value in rest_map.items():
+                _put(entry, rest_key, rest_value, number)
             result.append(entry)
         else:
             result.append(_scalar(item, number))
@@ -177,18 +202,131 @@ def _parse_list(lines, index: int, indent: int):
 
 
 def _scalar(text: str, number: int):
-    if text.startswith("[") and text.endswith("]"):
-        inner = text[1:-1].strip()
-        return [] if not inner else [_scalar(part.strip(), number) for part in inner.split(",")]
-    if text.startswith(("\"", "'")) and text.endswith(text[0]) and len(text) >= 2:
-        return text[1:-1]
+    """1 行に収まる値。流れ形式（`[a, b]`・`{ k: v }`）と引用符もここで読む。"""
+    if text.startswith(("[", "{", "\"", "'")):
+        value, end = _flow_value(text, 0, number, in_flow=False)
+        if text[end:].strip():
+            raise SchemaError(f"{number} 行目: 値の後ろに余りがある（{text[end:].strip()}）")
+        return value
+    return _plain(text, number)
+
+
+def _plain(text: str, number: int):
+    if text.startswith(("|", ">", "&", "*", "!", "%", "@", "`")):
+        raise SchemaError(f"{number} 行目: この書き方は読みません（{text}）。SCHEMA.md の範囲で書いてください")
     if text in {"true", "false"}:
         return text == "true"
     if re.fullmatch(r"-?\d+", text):
         return int(text)
-    if text.startswith(("|", ">", "&", "*", "{")):
-        raise SchemaError(f"{number} 行目: この書き方は読みません（{text}）。SCHEMA.md の範囲で書いてください")
     return text
+
+
+# 二重引用符の中で読むエスケープ。ほかの `\x` は推測せず落とす。
+_ESCAPES = {"\\": "\\", "\"": "\""}
+
+
+def _quoted(text: str, index: int, number: int) -> tuple[str, int]:
+    quote = text[index]
+    out: list[str] = []
+    index += 1
+    while index < len(text):
+        char = text[index]
+        if quote == '"' and char == "\\":
+            following = text[index + 1:index + 2]
+            if following not in _ESCAPES:
+                raise SchemaError(
+                    f"{number} 行目: 二重引用符の中で読めるエスケープは \\\\ と \\\" だけ（\\{following}）"
+                )
+            out.append(_ESCAPES[following])
+            index += 2
+            continue
+        if char == quote:
+            if quote == "'" and text[index + 1:index + 2] == "'":
+                out.append("'")
+                index += 2
+                continue
+            return "".join(out), index + 1
+        out.append(char)
+        index += 1
+    raise SchemaError(f"{number} 行目: 引用符が閉じていない（{text}）")
+
+
+def _skip_spaces(text: str, index: int) -> int:
+    while index < len(text) and text[index] == " ":
+        index += 1
+    return index
+
+
+def _flow_value(text: str, index: int, number: int, *, in_flow: bool = True):
+    """流れ形式の値を 1 つ読み、続きの位置を返す。`[...]` と `{...}` は入れ子にできる。"""
+    index = _skip_spaces(text, index)
+    if index >= len(text):
+        raise SchemaError(f"{number} 行目: 値が途中で終わっている（{text}）")
+    char = text[index]
+    if char == "[":
+        return _flow_sequence(text, index, number)
+    if char == "{":
+        return _flow_mapping(text, index, number)
+    if char in "\"'":
+        return _quoted(text, index, number)
+    if not in_flow:
+        return _plain(text[index:].strip(), number), len(text)
+    end = index
+    while end < len(text) and text[end] not in ",[]{}":
+        end += 1
+    plain = text[index:end].strip()
+    if not plain:
+        raise SchemaError(f"{number} 行目: 空の値がある（{text}）")
+    if ": " in plain or plain.endswith(":"):
+        raise SchemaError(f"{number} 行目: 流れ形式の値の中に `鍵: 値` がある（{plain}）")
+    return _plain(plain, number), end
+
+
+def _flow_sequence(text: str, index: int, number: int):
+    items: list = []
+    index = _skip_spaces(text, index + 1)
+    if text[index:index + 1] == "]":
+        return items, index + 1
+    while True:
+        value, index = _flow_value(text, index, number)
+        items.append(value)
+        index = _skip_spaces(text, index)
+        separator = text[index:index + 1]
+        if separator == ",":
+            index += 1
+            continue
+        if separator == "]":
+            return items, index + 1
+        raise SchemaError(f"{number} 行目: `[` が閉じていない（{text}）")
+
+
+def _flow_mapping(text: str, index: int, number: int):
+    result: dict = {}
+    index = _skip_spaces(text, index + 1)
+    if text[index:index + 1] == "}":
+        return result, index + 1
+    while True:
+        index = _skip_spaces(text, index)
+        if text[index:index + 1] in ("\"", "'"):
+            key, index = _quoted(text, index, number)
+        else:
+            end = index
+            while end < len(text) and text[end] not in ":,[]{}":
+                end += 1
+            key = text[index:end].strip()
+            index = end
+        if not key or text[index:index + 1] != ":":
+            raise SchemaError(f"{number} 行目: `{{ 鍵: 値 }}` の形にしてください（{text}）")
+        value, index = _flow_value(text, index + 1, number)
+        _put(result, key, value, number)
+        index = _skip_spaces(text, index)
+        separator = text[index:index + 1]
+        if separator == ",":
+            index += 1
+            continue
+        if separator == "}":
+            return result, index + 1
+        raise SchemaError(f"{number} 行目: `{{` が閉じていない（{text}）")
 
 
 # ---------------------------------------------------------------- 名前の変換
@@ -232,6 +370,10 @@ class Parameter:
     type_name: str = ""
     pattern: str = ""
     max_length: int = 0
+    extensible: bool = False
+    origin: str = "app"
+    # 共通の enum にアプリが足した値（`extend:`）。共通の値は `values` の頭に残る
+    app_values: list[str] = field(default_factory=list)
 
     @property
     def swift_label(self) -> str:
@@ -262,6 +404,12 @@ class Event:
     description: str = ""
     trigger: str = ""
     parameters: list[Parameter] = field(default_factory=list)
+    origin: str = "app"
+    sent_by: str = "app"
+
+    @property
+    def fired_by_app(self) -> bool:
+        return self.sent_by == "app"
 
 
 @dataclass
@@ -298,25 +446,72 @@ class Schema:
     properties: list[UserProperty]
     version: int = 1
     facts: list[Fact] = field(default_factory=list)
+    # 取り込んだカタログ（名前と版）。今は common だけ
+    includes: list[tuple[str, int]] = field(default_factory=list)
 
     @property
     def value_limit(self) -> int:
         return VALUE_LIMITS.get(self.dialect, GA4_VALUE_LIMIT)
 
+    @property
+    def app_fired_events(self) -> list[Event]:
+        """アプリが撃つ出来事。Swift の生成と配線の監査はこれだけを見る。"""
+        return [event for event in self.events if event.fired_by_app]
 
-def load(path: Path) -> Schema:
+
+def load(path: Path, common: Path | None = None) -> Schema:
+    """カタログを読み、`include:` と `extend:` を解いてから検査する。
+
+    `common` は `include: common` で読むファイル。省くとこのパッケージの `Schema/common/common.yaml`。
+    """
     raw = parse_yaml(path.read_text(encoding="utf-8"))
+    _reject_unknown_keys(raw, {"version", "name", "dialect", "swift", "include", "extend", "events",
+                               "user_properties", "facts"}, "カタログの頭")
     swift = raw.get("swift", {})
+    dialect = raw.get("dialect", "ga4")
+
+    included_events: list[Event] = []
+    includes: list[tuple[str, int]] = []
+    for name in _include_names(raw.get("include")):
+        if dialect != "envelope":
+            raise SchemaError(
+                f"include: {name} は dialect: envelope のカタログでだけ使える（いまは {dialect}）。"
+                "共通の出来事は固定の封筒で送る前提で、ga4 の予約名（first_open）や first_party の列の数に収まらない"
+            )
+        included_raw = parse_yaml(_include_path(name, common).read_text(encoding="utf-8"))
+        if included_raw.get("include") or included_raw.get("extend"):
+            raise SchemaError(f"{name}: 取り込まれるカタログは include / extend を持てない")
+        if included_raw.get("dialect", "envelope") != "envelope":
+            raise SchemaError(f"{name}: 取り込まれるカタログの dialect は envelope")
+        included_events += [_event(item, origin=name) for item in included_raw.get("events") or []]
+        includes.append((name, included_raw.get("version", 1)))
+
+    # 取り込まれる側のカタログ（common.yaml）をそのまま読んだときは、出来事をその名前の物として扱う
+    own_origin = raw["name"] if raw.get("name") in INCLUDABLE else "app"
+    own_events = [_event(item, origin=own_origin) for item in raw.get("events") or []]
+    included_names = {event.name for event in included_events}
+    clashing = sorted(included_names.intersection(event.name for event in own_events))
+    if clashing:
+        raise SchemaError(
+            f"{', '.join(clashing)}: 共通カタログにある出来事は events に書けない。値や引数を足すときは extend に書く"
+        )
+    if raw.get("extend") and not included_events:
+        raise SchemaError("extend は include したカタログの出来事にだけ書ける")
+    _apply_extend(raw.get("extend") or [], included_events)
+    events = included_events + own_events
+    _inherit_shared_enums(events)
+
     schema = Schema(
         event_type=swift.get("event_type", "AppEvent"),
         property_type=swift.get("property_type", "AppUserProperty"),
         module=swift.get("module", "App"),
         swiftui=bool(swift.get("swiftui", True)),
-        dialect=raw.get("dialect", "ga4"),
-        events=[_event(item) for item in raw.get("events") or []],
+        dialect=dialect,
+        events=events,
         properties=[_property(item) for item in raw.get("user_properties") or []],
         version=raw.get("version", 1),
         facts=[_fact(item) for item in raw.get("facts") or []],
+        includes=includes,
     )
     for event in schema.events:
         for parameter in event.parameters:
@@ -324,6 +519,108 @@ def load(path: Path) -> Schema:
                 parameter.max_length = schema.value_limit
     validate(schema)
     return schema
+
+
+def _include_names(value) -> list[str]:
+    if value is None:
+        return []
+    names = [value] if isinstance(value, str) else value
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise SchemaError(f"include は名前か名前の並び（{value}）")
+    unknown = sorted(set(names) - set(INCLUDABLE))
+    if unknown:
+        raise SchemaError(f"include できるのは {sorted(INCLUDABLE)} だけ（{', '.join(unknown)}）")
+    if len(set(names)) != len(names):
+        raise SchemaError(f"include に同じ名前が 2 回ある（{names}）")
+    return names
+
+
+def _include_path(name: str, common: Path | None) -> Path:
+    path = common if (name == "common" and common) else INCLUDABLE[name]
+    if not path.exists():
+        raise SchemaError(f"include: {name} のファイルが無い（{path}）。--common で場所を渡せる")
+    return path
+
+
+def _reject_unknown_keys(item: dict, allowed: set[str], where: str) -> None:
+    unknown = sorted(set(item) - allowed)
+    if unknown:
+        raise SchemaError(f"{where}: 知らない鍵 {', '.join(unknown)}（使える鍵は {', '.join(sorted(allowed))}）")
+
+
+def _apply_extend(items, included: list[Event]) -> None:
+    """共通の出来事に、enum の値と引数を足す。**共通の物は消せず、型も変えられない。**
+
+    値は型（`type_name`）ごとに足す。`ScreenName` は `screen_viewed` と `tapped` の両方が使うので、
+    片方に足した値はもう片方にも入る（同じ型名で値が違う状態を作らない）。
+    """
+    if not isinstance(items, list):
+        raise SchemaError("extend は `- name: 出来事` の並び")
+    by_name = {event.name: event for event in included}
+    added: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise SchemaError(f"extend の 1 件は `name` と `parameters` のマップ（{item}）")
+        name = _require(item, "name")
+        _reject_unknown_keys(item, {"name", "parameters"}, f"extend の {name}")
+        if name in seen:
+            raise SchemaError(f"extend: {name} が 2 回ある。1 つにまとめてください")
+        seen.add(name)
+        event = by_name.get(name)
+        if event is None:
+            raise SchemaError(f"extend: {name} は共通カタログに無い。アプリの出来事なら events に書く")
+        for key, spec in (item.get("parameters") or {}).items():
+            existing = next((p for p in event.parameters if p.key == key), None)
+            if existing is None:
+                if not isinstance(spec, dict):
+                    raise SchemaError(f"extend: {name}.{key} は引数の定義（type など）のマップ")
+                parameter = _parameter(key, spec)
+                parameter.origin = "app"
+                event.parameters.append(parameter)
+                continue
+            where = f"extend: {name}.{key}"
+            if not isinstance(spec, dict):
+                raise SchemaError(f"{where} は `values: [...]` のマップ")
+            changed = sorted(set(spec) - {"values"})
+            if changed:
+                raise SchemaError(
+                    f"{where}: 共通の引数の {', '.join(changed)} は変えられない（足せるのは extensible な enum の values だけ）"
+                )
+            if existing.type != "enum" or not existing.extensible:
+                raise SchemaError(f"{where}: extensible: true の enum でないので値を足せない")
+            values = spec.get("values")
+            if not isinstance(values, list) or not values:
+                raise SchemaError(f"{where}: values に足す値を 1 つ以上書く")
+            bucket = added.setdefault(existing.swift_type_name, [])
+            for value in values:
+                if value in existing.values:
+                    raise SchemaError(f"{where}: {value} は共通の値として既にある")
+                if value in bucket:
+                    raise SchemaError(f"{where}: {value} を 2 回足している（{existing.swift_type_name} の値）")
+                bucket.append(value)
+    for event in included:
+        for parameter in event.parameters:
+            extra = added.get(parameter.swift_type_name, []) if parameter.type == "enum" else []
+            if extra and parameter.origin != "app":
+                parameter.values = parameter.values + extra
+                parameter.app_values = list(extra)
+
+
+def _inherit_shared_enums(events: list[Event]) -> None:
+    """アプリの出来事が共通の enum の型名を `values` なしで書いたら、その値（足した値を含む）を使う。"""
+    shared = {
+        p.swift_type_name: p for e in events if e.origin != "app" for p in e.parameters
+        if p.type == "enum" and p.origin != "app"
+    }
+    for event in events:
+        if event.origin != "app":
+            continue
+        for parameter in event.parameters:
+            source = shared.get(parameter.type_name)
+            if parameter.type == "enum" and source and not parameter.values:
+                parameter.values = list(source.values)
+                parameter.extensible = source.extensible
 
 
 def _fact(item: dict) -> Fact:
@@ -335,10 +632,18 @@ def _fact(item: dict) -> Fact:
     )
 
 
-def _event(item: dict) -> Event:
+def _event(item: dict, origin: str = "app") -> Event:
     name = _require(item, "name")
     kind = _require(item, "kind")
     dedup = _require(item, "dedup")
+    sent_by = str(item.get("sent_by", "app"))
+    if sent_by not in SENT_BY:
+        raise SchemaError(f"{name}: sent_by が {sorted(SENT_BY)} のどれでもない（{sent_by}）")
+    if sent_by == "package" and origin == "app":
+        raise SchemaError(f"{name}: sent_by: package は共通カタログの出来事にだけ書ける")
+    parameters = [_parameter(key, value) for key, value in (item.get("parameters") or {}).items()]
+    for parameter in parameters:
+        parameter.origin = origin
     return Event(
         name=name,
         case=item.get("case") or lower_camel(name),
@@ -346,12 +651,22 @@ def _event(item: dict) -> Event:
         dedup=dedup,
         description=item.get("description", ""),
         trigger=item.get("trigger", ""),
-        parameters=[_parameter(key, value) for key, value in (item.get("parameters") or {}).items()],
+        parameters=parameters,
+        origin=origin,
+        sent_by=sent_by,
     )
 
 
 def _parameter(key: str, value: dict) -> Parameter:
+    if not isinstance(value, dict):
+        raise SchemaError(f"{key}: 引数は `type` などのマップ（{value}）")
+    extensible = value.get("extensible", False)
+    if not isinstance(extensible, bool):
+        raise SchemaError(f"{key}: extensible は true か false（{extensible}）")
+    if extensible and value.get("type") != "enum":
+        raise SchemaError(f"{key}: extensible は enum にだけ書ける")
     return Parameter(
+        extensible=extensible,
         key=key,
         type=_require(value, "type", context=key),
         values=list(value.get("values") or []),
@@ -393,6 +708,7 @@ def validate(schema: Schema) -> None:
     # 値集合は複数の出来事で共有できる。**同じ名前で中身が違うものだけを落とす。**
     value_sets: dict[str, list[str]] = {}
     token_shapes: dict[str, tuple[str, int]] = {}
+    extensible_flags: dict[str, bool] = {}
 
     if schema.dialect not in DIALECTS:
         problems.append(f"dialect が {sorted(DIALECTS)} のどれでもない（{schema.dialect}）")
@@ -442,6 +758,9 @@ def validate(schema: Schema) -> None:
                         f"（{existing} と {parameter.values}）。type_name で名前を分けてください"
                     )
                 value_sets[name] = parameter.values
+                flag = extensible_flags.setdefault(name, parameter.extensible)
+                if flag != parameter.extensible:
+                    problems.append(f"{event.name}.{parameter.key}: 値集合 {name} の extensible が別の場所と食い違う")
 
         if schema.dialect == "ga4":
             problems += _validate_ga4_name(event.name, reserved_names=True)
@@ -449,6 +768,8 @@ def validate(schema: Schema) -> None:
                 problems.append(f"{event.name}: パラメータが {len(event.parameters)} 個（GA4 の上限 {GA4_PARAMETER_LIMIT}）")
         if schema.dialect == "first_party":
             problems += _validate_first_party_event(event)
+        if schema.dialect == "envelope":
+            problems += _validate_envelope_event(event)
 
     for prop in schema.properties:
         if prop.type not in PARAM_TYPES:
@@ -459,7 +780,7 @@ def validate(schema: Schema) -> None:
             problems.append(f"{prop.name}: bucket なのに edges が無い")
         if schema.dialect == "ga4":
             problems += _validate_ga4_name(prop.name, reserved_names=False)
-        if schema.dialect == "first_party":
+        if schema.dialect in ("first_party", "envelope"):
             problems += _validate_first_party_name(prop.name, what="属性の名前")
         for value in prop.values:
             if len(value) > schema.value_limit:
@@ -545,6 +866,16 @@ def _validate_first_party_event(event: Event) -> list[str]:
     return problems
 
 
+def _validate_envelope_event(event: Event) -> list[str]:
+    problems = [p.replace("first_party", "envelope") for p in _validate_first_party_name(event.name, what="出来事の名前")]
+    for parameter in event.parameters:
+        problems += [
+            f"{event.name}.{problem.replace('first_party', 'envelope')}"
+            for problem in _validate_first_party_name(parameter.key, what="引数の名前")
+        ]
+    return problems
+
+
 def _validate_ga4_name(name: str, *, reserved_names: bool) -> list[str]:
     problems: list[str] = []
     if len(name) > GA4_NAME_LIMIT:
@@ -584,9 +915,13 @@ def _render_events(schema: Schema) -> list[str]:
         f"public enum {schema.event_type}: AnalyticsEvent {{",
         "",
     ]
-    for event in schema.events:
+    events = schema.app_fired_events
+    for event in events:
         if event.description:
             lines.append(f"    /// {event.description}")
+        if event.origin != "app":
+            lines.append("    ///")
+            lines.append(f"    /// 共通カタログ（{event.origin}）の出来事。名前と共通の引数はアプリで変えない。")
         if event.trigger:
             lines.append(f"    ///")
             lines.append(f"    /// 撃つ場所: {event.trigger}")
@@ -595,7 +930,7 @@ def _render_events(schema: Schema) -> list[str]:
 
     # 値集合。**共有されているものは 1 度だけ出す**（同名で中身が違うものは validate が落とす）。
     emitted: set[str] = set()
-    for event in schema.events:
+    for event in events:
         for parameter in (p for p in event.parameters if p.type == "enum"):
             if parameter.swift_type_name in emitted:
                 continue
@@ -607,17 +942,17 @@ def _render_events(schema: Schema) -> list[str]:
             lines.append("    }")
             lines.append("")
 
-    for event in schema.events:
+    for event in events:
         for parameter in (p for p in event.parameters if p.type == "token"):
             if parameter.swift_type_name in emitted:
                 continue
             emitted.add(parameter.swift_type_name)
             lines += _render_token(event, parameter)
 
-    lines += _render_switch("name", schema.events, lambda e: f'"{e.name}"')
-    lines += _render_switch("kind", schema.events, lambda e: f".{e.kind}", type_name="EventKind")
-    lines += _render_switch("dedup", schema.events, lambda e: f".{e.dedup}", type_name="DedupScope")
-    lines += _render_parameters(schema.events)
+    lines += _render_switch("name", events, lambda e: f'"{e.name}"')
+    lines += _render_switch("kind", events, lambda e: f".{e.kind}", type_name="EventKind")
+    lines += _render_switch("dedup", events, lambda e: f".{e.dedup}", type_name="DedupScope")
+    lines += _render_parameters(events)
     lines.append("}")
     return lines
 
@@ -781,12 +1116,16 @@ def _render_typed_entry_points(schema: Schema) -> list[str]:
         f"    func track(_ event: {schema.event_type}) {{",
         "        track(event as any AnalyticsEvent)",
         "    }",
-        "",
-        f"    func setUserProperty(_ property: {schema.property_type}) {{",
-        "        setUserProperty(property as any AnalyticsUserProperty)",
-        "    }",
-        "}",
     ]
+    if schema.properties:
+        # 属性が無いと型に値が無く、本文が「実行されない」と警告になる
+        lines += [
+            "",
+            f"    func setUserProperty(_ property: {schema.property_type}) {{",
+            "        setUserProperty(property as any AnalyticsUserProperty)",
+            "    }",
+        ]
+    lines += ["}"]
     if not schema.swiftui:
         return lines
     lines += [
@@ -824,6 +1163,10 @@ def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter
     shape: dict = {"type": type_}
     if type_ == "enum":
         shape["values"] = list(values)
+        if parameter is not None:
+            shape["extensible"] = parameter.extensible
+            if parameter.origin != "app":
+                shape["appValues"] = list(parameter.app_values)
     elif type_ == "bucket":
         shape["edges"] = sorted(edges)
         shape["values"] = bucket_labels(edges)
@@ -843,6 +1186,8 @@ def render_json(schema: Schema) -> str:
             "numbers": FIRST_PARTY_NUMBER_LIMIT,
             "tokens": FIRST_PARTY_TOKEN_LIMIT,
         })
+    elif schema.dialect == "envelope":
+        limits.update({"name": FIRST_PARTY_NAME_LIMIT})
     else:
         limits.update({"name": GA4_NAME_LIMIT, "parameters": GA4_PARAMETER_LIMIT})
     document = {
@@ -851,13 +1196,16 @@ def render_json(schema: Schema) -> str:
         "catalogVersion": schema.version,
         "dialect": schema.dialect,
         "limits": limits,
+        "includes": [{"name": name, "version": version} for name, version in schema.includes],
         "events": [
             {
                 "name": event.name,
                 "kind": event.kind,
                 "dedup": event.dedup,
+                "origin": event.origin,
+                "sentBy": event.sent_by,
                 "parameters": [
-                    {"key": p.key, **_json_value_shape(p.type, p.values, p.edges, p)}
+                    {"key": p.key, "origin": p.origin, **_json_value_shape(p.type, p.values, p.edges, p)}
                     for p in event.parameters
                 ],
             }
@@ -875,6 +1223,101 @@ def render_json(schema: Schema) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2) + "\n"
 
 
+# ---------------------------------------------------------------- 受け口のための TypeScript
+
+# 生成する TypeScript の頭の名前。enum の型名と重なると書き出せない。
+TS_RESERVED_NAMES = {"CATALOG_VERSION", "INCLUDES", "EVENTS", "EVENT_NAMES", "COMMON_EVENT_NAMES",
+                     "EventName", "CommonEventName", "EventProps"}
+
+
+def _ts_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _ts_type(parameter: Parameter) -> str:
+    if parameter.type == "enum":
+        return parameter.swift_type_name
+    if parameter.type == "bucket":
+        return " | ".join(_ts_string(label) for label in bucket_labels(parameter.edges))
+    return {"count": "number", "number": "number", "flag": "boolean", "token": "string"}[parameter.type]
+
+
+def _ts_shape(parameter: Parameter) -> str:
+    fields = [f"type: {_ts_string(parameter.type)}", f"origin: {_ts_string(parameter.origin)}"]
+    if parameter.type == "enum":
+        fields.append(f"values: {parameter.swift_type_name}")
+        fields.append(f"extensible: {'true' if parameter.extensible else 'false'}")
+    elif parameter.type == "bucket":
+        fields.append(f"edges: {json.dumps(sorted(parameter.edges))}")
+        fields.append(f"values: {json.dumps(bucket_labels(parameter.edges))}")
+    elif parameter.type == "token":
+        fields.append(f"pattern: {_ts_string(parameter.pattern)}")
+        fields.append(f"maxLength: {parameter.max_length}")
+    return "{ " + ", ".join(fields) + " }"
+
+
+def render_ts(schema: Schema) -> str:
+    """受け口（Worker・studio）が import する名前・引数・enum の値。照らし合わせは --json と同じ中身。"""
+    enums: dict[str, Parameter] = {}
+    for event in schema.events:
+        for parameter in event.parameters:
+            if parameter.type == "enum":
+                enums.setdefault(parameter.swift_type_name, parameter)
+    clashing = sorted(TS_RESERVED_NAMES.intersection(enums))
+    if clashing:
+        raise SchemaError(f"enum の型名 {', '.join(clashing)} は TypeScript の出力の名前と重なる。type_name を替えてください")
+
+    out = [
+        HEADER,
+        "// 元は analytics.yaml。**先にそちらを直してから生成する。**",
+        "",
+        f"export const CATALOG_VERSION = {schema.version} as const;",
+        "export const INCLUDES = ["
+        + ", ".join(f"{{ name: {_ts_string(n)}, version: {v} }}" for n, v in schema.includes)
+        + "] as const;",
+        "",
+    ]
+    for name, parameter in enums.items():
+        out.append(f"export const {name} = [{', '.join(_ts_string(v) for v in parameter.values)}] as const;")
+        out.append(f"export type {name} = (typeof {name})[number];")
+    out += ["", "export const EVENTS = {"]
+    for event in schema.events:
+        out.append(f"  {event.name}: {{")
+        out.append(
+            f"    kind: {_ts_string(event.kind)}, dedup: {_ts_string(event.dedup)}, "
+            f"origin: {_ts_string(event.origin)}, sentBy: {_ts_string(event.sent_by)},"
+        )
+        if event.parameters:
+            out.append("    parameters: {")
+            for parameter in event.parameters:
+                out.append(f"      {parameter.key}: {_ts_shape(parameter)},")
+            out.append("    },")
+        else:
+            out.append("    parameters: {},")
+        out.append("  },")
+    out += [
+        "} as const;",
+        "",
+        "export type EventName = keyof typeof EVENTS;",
+        "export const EVENT_NAMES = Object.keys(EVENTS) as EventName[];",
+        "export const COMMON_EVENT_NAMES = ["
+        + ", ".join(_ts_string(e.name) for e in schema.events if e.origin != "app")
+        + "] as const satisfies readonly EventName[];",
+        "export type CommonEventName = (typeof COMMON_EVENT_NAMES)[number];",
+        "",
+        "/** 出来事ごとの `props` の型。生成した Swift は引数を全部埋めて送る。 */",
+        "export interface EventProps {",
+    ]
+    for event in schema.events:
+        if not event.parameters:
+            out.append(f"  {event.name}: Record<string, never>;")
+            continue
+        fields = "; ".join(f"{p.key}: {_ts_type(p)}" for p in event.parameters)
+        out.append(f"  {event.name}: {{ {fields} }};")
+    out.append("}")
+    return "\n".join(out) + "\n"
+
+
 # ---------------------------------------------------------------- 配線の監査
 
 ENTRY_POINTS = ("trackScreen", "trackImpression", "track", "setUserProperty")
@@ -885,9 +1328,12 @@ def audit(schema: Schema, roots: list[Path]) -> list[str]:
     corpus = "\n".join(expression for _, expression, _ in sites)
     problems: list[str] = []
 
-    for event in schema.events:
-        if not re.search(rf"\.{event.case}\b", corpus):
-            problems.append(f"{event.name}（.{event.case}）を撃っている場所が無い")
+    for event in schema.app_fired_events:
+        fired = re.search(rf"\.{event.case}\b", corpus)
+        if not fired:
+            # 共通の出来事は、アプリにその場面が無ければ撃たなくてよい（unfired_common が知らせるだけ）
+            if event.origin == "app":
+                problems.append(f"{event.name}（.{event.case}）を撃っている場所が無い")
             continue
         # 値はその出来事を撃っている式の中だけで探す。ほかの出来事や属性に同じ名前の値があっても数えない。
         own = "\n".join(expression for _, expression, _ in sites if re.search(rf"\.{event.case}\b", expression))
@@ -896,8 +1342,10 @@ def audit(schema: Schema, roots: list[Path]) -> list[str]:
             if not literal:
                 # 値をすべて計算式で渡している。静的には確かめられないので落とさない。
                 continue
-            for value in parameter.values:
-                if value not in [v for v in literal]:
+            # 共通の値は、アプリにその入口が無いことがある。確かめるのはアプリが足した値とアプリの引数だけ
+            expected = parameter.values if parameter.origin == "app" else parameter.app_values
+            for value in expected:
+                if value not in literal:
                     problems.append(f"{event.name}.{parameter.key} = {value} を撃っている場所が無い")
 
     problems += _audit_firing_mechanism(schema, sites)
@@ -929,9 +1377,18 @@ MECHANISM_FOR_KIND = {
 }
 
 
+def unfired_common(schema: Schema, roots: list[Path]) -> list[str]:
+    """共通カタログの出来事のうち、アプリがどこからも撃っていないもの。落とさず知らせるだけ。"""
+    corpus = "\n".join(expression for _, expression, _ in _collect_sites(roots))
+    return [
+        event.name for event in schema.app_fired_events
+        if event.origin != "app" and not re.search(rf"\.{event.case}\b", corpus)
+    ]
+
+
 def _audit_firing_mechanism(schema: Schema, sites: list[tuple[str, str, str]]) -> list[str]:
     problems: list[str] = []
-    for event in schema.events:
+    for event in schema.app_fired_events:
         expected = MECHANISM_FOR_KIND[event.kind]
         for entry, expression, location in sites:
             if entry == "setUserProperty" or not re.search(rf"\.{event.case}\b", expression):
@@ -978,41 +1435,52 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    common_help = "include: common で読むファイル（省くとパッケージの Schema/common/common.yaml）"
     for name in ("generate", "check"):
         p = sub.add_parser(name)
         p.add_argument("--schema", type=Path, required=True)
+        p.add_argument("--common", type=Path, help=common_help)
         p.add_argument("--out", type=Path, help="書き出す Swift のファイル")
         p.add_argument("--json", type=Path, help="受け口のための JSON のカタログ")
+        p.add_argument("--ts", type=Path, help="受け口のための TypeScript（名前・引数・enum の値）")
 
     p = sub.add_parser("audit")
     p.add_argument("--schema", type=Path, required=True)
+    p.add_argument("--common", type=Path, help=common_help)
     p.add_argument("--sources", type=Path, nargs="+", required=True)
 
     args = parser.parse_args()
 
     try:
-        schema = load(args.schema)
+        schema = load(args.schema, common=args.common)
     except SchemaError as error:
         print(str(error), file=sys.stderr)
         return 1
 
     if args.command in ("generate", "check"):
-        outputs = [(path, renderer) for path, renderer in ((args.out, render), (args.json, render_json)) if path]
+        renderers = ((args.out, render), (args.json, render_json), (args.ts, render_ts))
+        outputs = [(path, renderer) for path, renderer in renderers if path]
         if not outputs:
-            print("--out と --json の少なくとも一方が要ります", file=sys.stderr)
+            print("--out・--json・--ts の少なくとも 1 つが要ります", file=sys.stderr)
             return 2
+        try:
+            rendered = {path: renderer(schema) for path, renderer in outputs}
+        except SchemaError as error:
+            print(str(error), file=sys.stderr)
+            return 1
         if args.command == "generate":
-            for path, renderer in outputs:
+            for path, text in rendered.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(renderer(schema), encoding="utf-8")
+                path.write_text(text, encoding="utf-8")
                 print(f"生成: {path}（出来事 {len(schema.events)} / 属性 {len(schema.properties)}）")
             return 0
         stale = [
-            path for path, renderer in outputs
-            if renderer(schema) != (path.read_text(encoding="utf-8") if path.exists() else "")
+            path for path, text in rendered.items()
+            if text != (path.read_text(encoding="utf-8") if path.exists() else "")
         ]
         if stale:
-            flags = " ".join(f"{flag} {path}" for flag, path in (("--out", args.out), ("--json", args.json)) if path)
+            pairs = (("--common", args.common), ("--out", args.out), ("--json", args.json), ("--ts", args.ts))
+            flags = " ".join(f"{flag} {path}" for flag, path in pairs if path)
             for path in stale:
                 print(f"生成物がスキーマとずれています: {path}", file=sys.stderr)
             print(
@@ -1025,6 +1493,8 @@ def main() -> int:
         return 0
 
     problems = audit(schema, args.sources)
+    for name in unfired_common(schema, args.sources):
+        print(f"（知らせ）共通の出来事 {name} を撃っている場所が無い。その場面がアプリに無いなら、そのままでよい")
     if problems:
         print("計測の配線がカタログと合っていません:\n", file=sys.stderr)
         for problem in problems:

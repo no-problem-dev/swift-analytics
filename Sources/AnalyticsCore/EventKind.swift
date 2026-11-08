@@ -6,11 +6,15 @@
 ///
 /// ## Facts are absent on purpose
 ///
-/// **Domain facts are not sent from the client** — bought, household created, notification sent.
-/// The fact is already persisted on the server and that is the authoritative copy, so sending the
-/// same thing as an event guarantees a discrepancy, with no way left to decide which side is
-/// right (anything recorded offline and synced later has a send time that differs from the time
-/// it happened).
+/// **Domain facts are not sent from the client** — household created, notification sent. The fact
+/// is already persisted on the server and that is the authoritative copy, so sending the same
+/// thing as an event guarantees a discrepancy, with no way left to decide which side is right
+/// (anything recorded offline and synced later has a send time that differs from the time it
+/// happened).
+///
+/// A purchase made on a paywall is the exception, and an ``outcome``: `purchase_completed` in the
+/// common catalog records *which wall* it happened on, which no server record knows. Revenue and
+/// renewals are still RevenueCat's, never a count of these events.
 ///
 /// Count those with SQL over the server's data. That discipline is what **removes any need to
 /// thread measurement through the use-case layer** — measurement never takes up residence in the

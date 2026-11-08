@@ -2,6 +2,81 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
+One shared catalog and one envelope for every app. **Contains breaking changes** (see Removed and
+Changed); 0.x minors break, so move from `.upToNextMinor(from: "0.2.0")` deliberately, following
+"Migrating from 0.2" below.
+
+### Added
+
+- `Schema/common/common.yaml` — the common catalog: `first_open`, `internal_device`,
+  `screen_viewed`, `tapped`, `onboarding_step`, `onboarding_completed`, `signed_in`,
+  `experiment_assigned`, `paywall_*`, `purchase_completed`, `restore_completed`,
+  `review_requested`, `whats_new_shown`, `whats_new_closed`. Generated copies for receivers in
+  `Schema/common/common.catalog.json` and `common.catalog.ts`
+- `Schema/common/ENVELOPE.md` — the one shape `AnalyticsBatchSink` sends
+- Generator: `include: common` (in `dialect: envelope` catalogs) and `extend:`, which adds values to
+  `extensible: true` enums and parameters to common events. Common values and parameters cannot be
+  removed or retyped; trying fails generation. Values are added per type, so `ScreenName` gets them
+  in every event that uses it. An app event can use a common enum by `type_name` alone.
+  `--common <path>` reads another copy of the common catalog
+- Generator: `dialect: envelope` — names and values as in `first_party` (snake_case, 40 / 64
+  characters), with no column limits, since `props` is a flat JSON object
+- Generator: `--ts` writes the catalog as TypeScript (`EVENTS`, `EventName`, `EventProps`, a
+  `const` and a type per enum) for Workers and dashboards
+- Generator: `--json` marks each event's and parameter's `origin` (`common` / `app`), each event's
+  `sentBy` (`package` / `app`), `includes`, and for enums `extensible` and `appValues`
+- Generator: `sent_by: package` in the common catalog keeps `first_open` and `internal_device`
+  out of the app's Swift type; this package sends them
+- Generator: the YAML reader takes flow mappings (`{ type: enum, values: [a, b] }`, nestable),
+  `\\` and `\"` escapes in double quotes, and `''` in single quotes. Duplicate keys and other
+  escapes are rejected, as is anything else outside the documented subset
+- `InstallID`, `BuildChannel` (with the pure `resolve(…)`), `InternalDevice`, `CommonEvent`, and
+  `FirstOpenKind` in `AnalyticsCore`
+- `FirstLaunch.recordLaunch(sendingTo:hasPriorData:defaults:now:)` — stamps the first launch and
+  sends `first_open{kind: fresh|upgraded}` once
+- `EnvelopeContext` and `BatchTransport` in `AnalyticsBatchSink`
+
+### Changed
+
+- **BREAKING:** `AnalyticsBatchSink` posts the batch itself, in the fixed envelope. The initialiser
+  is `init(app:endpoint:authorize:uid:directory:policy:context:transport:makeID:now:)`; responses are
+  read by a fixed table (`2xx` delivered; `401`/`403`/`408`/`429`/`5xx` kept, honouring
+  `Retry-After`; other statuses dropped). Every event gets an `id` (UUID) and `occurred_at` in ms.
+  Events tracked under a different app version, build, or uid go in separate batches
+- **BREAKING:** `AnalyticsBatchSink.setUserProperty(_:)` does nothing — the envelope has no place for
+  properties
+- **BREAKING:** the spool file is format 2; a 0.2 spool is not read (its events were laid out for
+  another envelope)
+- **BREAKING:** the generator rejects unknown top-level keys in a catalog
+- `AnalyticsEvent.dedupKey` is a protocol requirement (with the same default). A `dedupKey` written
+  on the conforming type now reaches `DedupingAnalytics`; before, it was silently ignored
+- The generated `setUserProperty` overload is left out when a catalog declares no properties
+- `purchase_completed` is documented as a client-side outcome (conversion per paywall); `facts` are
+  for what only the server has. Revenue and renewals are RevenueCat's
+
+### Removed
+
+- **BREAKING:** `BatchFormat`, the `format`, `header`, `stamp` and `send` parameters of
+  `AnalyticsBatchSink`, and the public `BatchOutcome`
+- **BREAKING:** `FirstLaunch.markIfNeeded(defaults:now:)` — use `recordLaunch(sendingTo:)`
+
+### Migrating from 0.2
+
+1. Pin `.upToNextMinor(from: "0.3.0")`
+2. In `analytics.yaml`, set `dialect: envelope` and `include: common`. Delete the events the
+   common catalog now has (rename yours to its names: `paywall_viewed` → `paywall_shown`,
+   `purchased` → `purchase_completed`, …) and put your extra values under `extend:`. Run
+   `generate --out … --json … --ts …` and fix the call sites the compiler points at
+3. Replace the sink: `AnalyticsBatchSink(app: "<snake_case name>", endpoint: <URL>, authorize: { <headers> })`,
+   plus `uid:` if you tie behaviour to purchases. Drop `header`, `stamp`, `format`, `send`
+4. Replace `FirstLaunch.markIfNeeded()` with `FirstLaunch.recordLaunch(sendingTo: analytics)`
+   (`hasPriorData: true` when the app already holds data from before). Call
+   `InternalDevice.mark(sendingTo: analytics)` from your hidden switch
+5. Change the receiver to read the envelope (or create the `app_events` table in ENVELOPE.md), and
+   check incoming names against the generated `catalog.ts`. Remove any `dedupKey` workaround
+
 ## [0.2.0] - 2026-10-01
 
 Adds a first-party pipeline next to the vendor adapters: a sink that keeps events on the device

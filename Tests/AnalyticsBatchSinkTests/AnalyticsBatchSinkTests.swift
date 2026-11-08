@@ -7,42 +7,105 @@ import Testing
 @Suite("溜めてまとめて送る")
 struct AnalyticsBatchSinkTests {
 
-    @Test("1件ごとに ID と時刻が付き、束の頭に header と属性が載る")
-    func laysOutOneBatch() async throws {
+    @Test("束は ENVELOPE.md の形で届く（頭の項目・ミリ秒・id・props）")
+    func laysOutTheEnvelope() async throws {
         let rig = Rig()
-        let sink = rig.sink(header: { ["install": .text("ins_1"), "v": .count(1)] })
+        rig.uid.withLock { $0 = "uid_1" }
+        let sink = rig.sink()
 
-        sink.setUserProperty(Property(name: "plan", value: "free"))
-        sink.track(Event(name: "paywall_shown", parameters: ["placement": .text("settings"), "trial_eligible": .flag(true)]))
+        sink.track(Event(name: "paywall_shown", parameters: ["source": .text("onboarding"), "nth": .text("1_1")]))
+        rig.clock.advance(by: 2)
         let report = await sink.flush()
 
         #expect(report == FlushReport(status: .emptied, delivered: 1, discarded: 0, remaining: 0))
-        let body = try #require(rig.sender.bodies.first)
-        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        #expect(json["install"] as? String == "ins_1")
-        #expect(json["v"] as? Int == 1)
-        #expect(json["plan"] as? String == "free")
+        let json = try rig.sender.json(at: 0)
+        #expect(Set(json.keys) == [
+            "schema_version", "app", "install_id", "uid", "app_version", "build", "channel", "lang", "region",
+            "sent_at", "events",
+        ])
+        #expect(json["schema_version"] as? Int == 1)
+        #expect(json["app"] as? String == "kotoakari")
+        #expect(json["install_id"] as? String == "8c1f0000-0000-4000-8000-000000000000")
+        #expect(json["uid"] as? String == "uid_1")
+        #expect(json["app_version"] as? String == "1.2.0")
+        #expect(json["build"] as? String == "45")
+        #expect(json["channel"] as? String == "testflight")
+        #expect(json["lang"] as? String == "ja")
+        #expect(json["region"] as? String == "JP")
+        #expect(json["sent_at"] as? Int == Rig.startMilliseconds + 2_000)
         let events = try #require(json["events"] as? [[String: Any]])
         #expect(events.count == 1)
+        #expect(Set(events[0].keys) == ["id", "name", "occurred_at", "props"])
         #expect(events[0]["id"] as? String == "id-1")
         #expect(events[0]["name"] as? String == "paywall_shown")
-        #expect(events[0]["at"] as? Double == Rig.start.timeIntervalSince1970)
-        let params = try #require(events[0]["params"] as? [String: Any])
-        #expect(params["placement"] as? String == "settings")
-        #expect(params["trial_eligible"] as? Bool == true)
+        #expect(events[0]["occurred_at"] as? Int == Rig.startMilliseconds)
+        #expect(events[0]["props"] as? [String: String] == ["source": "onboarding", "nth": "1_1"])
     }
 
-    @Test("stamp の値はイベントの横に並び、sink 自身の鍵は上書きされない")
-    func stampsEachEvent() async throws {
+    @Test("POST で JSON を送り、authorize の項目をヘッダに載せる")
+    func postsWithAuthorization() async throws {
         let rig = Rig()
-        let sink = rig.sink(stamp: { _, _ in ["sinceInstallDays": .count(0), "name": .text("spoofed")] })
+        let sink = rig.sink(authorize: { ["Authorization": "Bearer t0k"] })
 
-        sink.track(Event(name: "app_opened"))
+        sink.track(Event(name: "tapped"))
         await sink.flush()
 
-        let event = try rig.firstEvent()
-        #expect(event["sinceInstallDays"] as? Int == 0)
-        #expect(event["name"] as? String == "app_opened")
+        let request = try #require(rig.sender.requests.first)
+        #expect(request.url == Rig.endpoint)
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer t0k")
+    }
+
+    @Test("authorize が throw したら束を残す（トークンが無いだけで捨てない）")
+    func keepsBatchWhenAuthorizationFails() async {
+        let rig = Rig()
+        let sink = rig.sink(authorize: { throw Failure() })
+
+        sink.track(Event(name: "tapped"))
+        let report = await sink.flush()
+
+        #expect(report.status == .deferred(until: Rig.start.addingTimeInterval(60)))
+        #expect(report.remaining == 1)
+        #expect(rig.sender.requests.isEmpty)
+    }
+
+    @Test("uid が無ければ uid の鍵を書かない")
+    func omitsMissingUID() async throws {
+        let rig = Rig()
+        let sink = rig.sink()
+
+        sink.track(Event(name: "tapped"))
+        await sink.flush()
+
+        #expect(try rig.sender.json(at: 0)["uid"] == nil)
+    }
+
+    @Test("版・ビルド・uid が違う出来事は別の束で送る（頭はそれが起きたときの値）")
+    func splitsBatchesByOrigin() async throws {
+        let rig = Rig()
+        let sink = rig.sink()
+
+        sink.track(Event(name: "before_sign_in"))
+        rig.uid.withLock { $0 = "uid_1" }
+        sink.track(Event(name: "after_sign_in"))
+        sink.track(Event(name: "still_signed_in"))
+        await sink.flush()
+
+        #expect(rig.sender.names == [["before_sign_in"], ["after_sign_in", "still_signed_in"]])
+        #expect(try rig.sender.json(at: 0)["uid"] == nil)
+        #expect(try rig.sender.json(at: 1)["uid"] as? String == "uid_1")
+    }
+
+    @Test("応答の読み方は固定（2xx 届いた・401/429/5xx 残す・その他の 4xx 捨てる）")
+    func readsResponses() {
+        #expect(BatchOutcome(status: 200, retryAfter: nil) == .delivered)
+        #expect(BatchOutcome(status: 204, retryAfter: nil) == .delivered)
+        #expect(BatchOutcome(status: 400, retryAfter: nil) == .rejected)
+        #expect(BatchOutcome(status: 413, retryAfter: nil) == .rejected)
+        #expect(BatchOutcome(status: 401, retryAfter: nil) == .retryLater(after: nil))
+        #expect(BatchOutcome(status: 429, retryAfter: "120") == .retryLater(after: .seconds(120)))
+        #expect(BatchOutcome(status: 503, retryAfter: "soon") == .retryLater(after: nil))
     }
 
     @Test("1束は maxEvents まで。残りは同じ flush の次の束で送る")
@@ -74,9 +137,9 @@ struct AnalyticsBatchSinkTests {
     @Test("1件だけで maxBytes を超えるものは捨て、後ろを止めない")
     func discardsOversizedEvent() async {
         let rig = Rig()
-        let sink = rig.sink(policy: BatchPolicy(maxBytes: 200, flushThreshold: 1_000))
+        let sink = rig.sink(policy: BatchPolicy(maxBytes: 500, flushThreshold: 1_000))
 
-        sink.track(Event(name: "huge", parameters: ["blob": .text(String(repeating: "x", count: 500))]))
+        sink.track(Event(name: "huge", parameters: ["blob": .text(String(repeating: "x", count: 600))]))
         sink.track(Event(name: "small"))
         let report = await sink.flush()
 
@@ -99,7 +162,7 @@ struct AnalyticsBatchSinkTests {
     @Test("rejected の束は捨て、次の束に進む")
     func dropsRejectedBatch() async {
         let rig = Rig()
-        rig.sender.script([.rejected, .delivered])
+        rig.sender.script([400, 200])
         let sink = rig.sink(policy: BatchPolicy(maxEvents: 2, flushThreshold: 1_000))
 
         for _ in 0..<4 { sink.track(Event(name: "tapped")) }
@@ -111,7 +174,7 @@ struct AnalyticsBatchSinkTests {
     @Test("retryLater は束を残し、待ちが過ぎるまで送らない")
     func keepsBatchOnRetryLater() async {
         let rig = Rig()
-        rig.sender.script([.retryLater(after: .seconds(120))])
+        rig.sender.script([429], retryAfter: "120")
         let sink = rig.sink()
 
         sink.track(Event(name: "tapped"))
@@ -123,7 +186,7 @@ struct AnalyticsBatchSinkTests {
         rig.clock.advance(by: 90)
         let throttled = await sink.flush()
         #expect(throttled.status == .throttled(until: Rig.start.addingTimeInterval(120)))
-        #expect(rig.sender.bodies.count == 1)
+        #expect(rig.sender.requests.count == 1)
 
         rig.clock.advance(by: 30)
         let second = await sink.flush()
@@ -162,26 +225,47 @@ struct AnalyticsBatchSinkTests {
     }
 
     @Test("溜めた物は作り直した sink（次の起動）が読み、送る")
-    func survivesRelaunch() async {
+    func survivesRelaunch() async throws {
         let rig = Rig()
         let first = rig.sink()
-        first.setUserProperty(Property(name: "plan", value: "trial"))
         first.track(Event(name: "app_opened"))
         await first.save()
 
+        rig.version.withLock { $0 = "1.3.0" }
         let relaunched = rig.sink()
         #expect(relaunched.pendingCount == 1)
         await relaunched.flush()
 
         #expect(rig.sender.names == [["app_opened"]])
-        #expect(rig.sender.properties(at: 0)["plan"] as? String == "trial")
+        // 起きたときの版で送る（更新の後に送っても、前の版の出来事は前の版）
+        #expect(try rig.sender.json(at: 0)["app_version"] as? String == "1.2.0")
     }
 
-    @Test("purge は溜めた物と属性とファイルを消す")
-    func purgeErasesEverything() async {
+    @Test("0.2 の形のファイルは読まない")
+    func ignoresOldSpoolFormat() throws {
+        let rig = Rig()
+        try FileManager.default.createDirectory(at: rig.directory, withIntermediateDirectories: true)
+        let old = #"{"format":1,"events":[{"id":"a","name":"x","at":1.0,"parameters":{},"stamp":{}}],"properties":{}}"#
+        try Data(old.utf8).write(to: URL(filePath: rig.spoolPath))
+
+        #expect(rig.sink().pendingCount == 0)
+    }
+
+    @Test("属性は送らない（封筒に場所が無い）")
+    func ignoresProperties() async throws {
         let rig = Rig()
         let sink = rig.sink()
         sink.setUserProperty(Property(name: "plan", value: "free"))
+        sink.track(Event(name: "tapped"))
+        await sink.flush()
+
+        #expect(try rig.sender.json(at: 0)["plan"] == nil)
+    }
+
+    @Test("purge は溜めた物とファイルを消す")
+    func purgeErasesEverything() async {
+        let rig = Rig()
+        let sink = rig.sink()
         sink.track(Event(name: "app_opened"))
         await sink.save()
         #expect(FileManager.default.fileExists(atPath: rig.spoolPath))
@@ -200,24 +284,8 @@ struct AnalyticsBatchSinkTests {
 
         for _ in 0..<3 { sink.track(Event(name: "tapped")) }
 
-        try await waitUntil { rig.sender.bodies.count == 1 }
+        try await waitUntil { rig.sender.requests.count == 1 }
         #expect(rig.sender.eventCounts == [3])
-    }
-
-    @Test("鍵と時刻の単位を替えられる（ミリ秒・properties の入れ子）")
-    func honoursFormat() async throws {
-        let rig = Rig()
-        let format = BatchFormat(timeKey: "occurredAt", time: .milliseconds, parametersKey: "properties", propertiesKey: "user")
-        let sink = rig.sink(format: format)
-
-        sink.setUserProperty(Property(name: "plan", value: "free"))
-        sink.track(Event(name: "tapped", parameters: ["n": .count(2)]))
-        await sink.flush()
-
-        let event = try rig.firstEvent()
-        #expect(event["occurredAt"] as? Int == Int(Rig.start.timeIntervalSince1970 * 1000))
-        #expect((event["properties"] as? [String: Any])?["n"] as? Int == 2)
-        #expect((rig.sender.properties(at: 0)["user"] as? [String: Any])?["plan"] as? String == "free")
     }
 
     @Test("同じ時に flush を2つ呼んでも、送るのは1つだけ")
@@ -262,8 +330,9 @@ private struct Failure: Error {}
 private final class Sender: Sendable {
 
     private struct State: Sendable {
-        var bodies: [Data] = []
-        var outcomes: [BatchOutcome] = []
+        var requests: [URLRequest] = []
+        var statuses: [Int] = []
+        var retryAfter: String?
         var failNext = false
         var hold: CheckedContinuation<Void, Never>?
         var holdNext = false
@@ -272,17 +341,22 @@ private final class Sender: Sendable {
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    var bodies: [Data] { state.withLock { $0.bodies } }
+    var requests: [URLRequest] { state.withLock { $0.requests } }
+
+    var bodies: [Data] { requests.compactMap(\.httpBody) }
 
     var eventCounts: [Int] { bodies.map { Self.events(in: $0).count } }
 
     var names: [[String]] { bodies.map { Self.events(in: $0).compactMap { $0["name"] as? String } } }
 
-    func properties(at index: Int) -> [String: Any] {
-        (try? JSONSerialization.jsonObject(with: bodies[index]) as? [String: Any]) ?? [:]
+    func json(at index: Int) throws -> [String: Any] {
+        let body = try #require(bodies.indices.contains(index) ? bodies[index] : nil)
+        return try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
     }
 
-    func script(_ outcomes: [BatchOutcome]) { state.withLock { $0.outcomes = outcomes } }
+    func script(_ statuses: [Int], retryAfter: String? = nil) {
+        state.withLock { $0.statuses = statuses; $0.retryAfter = retryAfter }
+    }
     func failNext() { state.withLock { $0.failNext = true } }
     func holdNext() { state.withLock { $0.holdNext = true } }
 
@@ -298,7 +372,7 @@ private final class Sender: Sendable {
         continuation?.resume()
     }
 
-    func send(_ body: Data) async throws -> BatchOutcome {
+    func perform(_ request: URLRequest) async throws -> HTTPURLResponse {
         let holding = state.withLock { state -> Bool in
             defer { state.holdNext = false }
             return state.holdNext
@@ -308,14 +382,16 @@ private final class Sender: Sendable {
                 state.withLock { $0.hold = continuation; $0.held = true }
             }
         }
-        return try state.withLock { state in
+        let (status, retryAfter) = try state.withLock { state -> (Int, String?) in
             if state.failNext {
                 state.failNext = false
                 throw Failure()
             }
-            state.bodies.append(body)
-            return state.outcomes.isEmpty ? .delivered : state.outcomes.removeFirst()
+            state.requests.append(request)
+            return (state.statuses.isEmpty ? 200 : state.statuses.removeFirst(), state.retryAfter)
         }
+        let headers = retryAfter.map { ["Retry-After": $0] }
+        return HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
     }
 
     private static func events(in body: Data) -> [[String: Any]] {
@@ -327,42 +403,46 @@ private final class Sender: Sendable {
 private final class Rig: Sendable {
 
     static let start = Date(timeIntervalSince1970: 1_790_000_000)
+    static let startMilliseconds = 1_790_000_000_000
+    static let endpoint = URL(string: "https://example.com/v1/events")!
 
     let directory = FileManager.default.temporaryDirectory
         .appending(path: "swift-analytics-tests")
         .appending(path: UUID().uuidString)
     let clock = TestClock()
     let sender = Sender()
+    let uid = OSAllocatedUnfairLock<String?>(initialState: nil)
+    let version = OSAllocatedUnfairLock(initialState: "1.2.0")
     private let ids = OSAllocatedUnfairLock(initialState: 0)
 
     var spoolPath: String { directory.appending(path: "events.json").path }
 
     func sink(
         policy: BatchPolicy = .standard,
-        format: BatchFormat = .standard,
-        header: @escaping @Sendable () async -> [String: AnalyticsValue] = { [:] },
-        stamp: @escaping @Sendable (any AnalyticsEvent, Date) -> [String: AnalyticsValue] = { _, _ in [:] }
+        authorize: @escaping @Sendable () async throws -> [String: String] = { [:] }
     ) -> AnalyticsBatchSink {
         let clock = clock
         let sender = sender
         let ids = ids
+        let uid = uid
+        let version = version
         return AnalyticsBatchSink(
+            app: "kotoakari",
+            endpoint: Self.endpoint,
+            authorize: authorize,
+            uid: { uid.withLock { $0 } },
             directory: directory,
             policy: policy,
-            format: format,
-            header: header,
-            stamp: stamp,
+            context: {
+                EnvelopeContext(
+                    installID: "8c1f0000-0000-4000-8000-000000000000",
+                    appVersion: version.withLock { $0 }, build: "45", channel: .testflight, lang: "ja", region: "JP"
+                )
+            },
+            transport: BatchTransport { try await sender.perform($0) },
             makeID: { "id-\(ids.withLock { $0 += 1; return $0 })" },
-            now: { clock.now },
-            send: { try await sender.send($0) }
+            now: { clock.now }
         )
-    }
-
-    func firstEvent() throws -> [String: Any] {
-        let body = try #require(sender.bodies.first)
-        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        let events = try #require(json["events"] as? [[String: Any]])
-        return try #require(events.first)
     }
 }
 

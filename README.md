@@ -29,9 +29,16 @@ mistake. This package puts the counting rule in the vocabulary.
   and no real waiting
 - **A CI audit that grep cannot do.** Declared-but-never-fired events, the same firing appearing in
   two places, and string sends that bypass the catalog all fail the build
-- **A first-party pipeline, if you want one.** `AnalyticsBatchSink` keeps events in a file and
-  sends them in batches through a closure you write; the generator's `first_party` dialect holds
-  the catalog to a receiver's column limits and writes the receiver's copy of the catalog as JSON
+- **One shared catalog, one envelope.** `Schema/common/common.yaml` holds the events every app has
+  (`first_open`, `paywall_*`, `purchase_completed`, `review_requested`, `whats_new_*`, …). An app
+  catalog says `include: common` and adds its own values with `extend:` instead of copying names.
+  `AnalyticsBatchSink` sends every app's events in the same fixed envelope
+  (`Schema/common/ENVELOPE.md`); the app gives it a URL, an authorization closure, and its name
+- **The receiver gets the same catalog.** `--json` and `--ts` write the catalog for the server
+  (a Cloudflare Worker, a dashboard) to check against and import
+- **The install and the build, done once.** `InstallID`, `BuildChannel` (debug / TestFlight /
+  App Store), `FirstLaunch` (sends `first_open{kind: fresh|upgraded}` once), and `InternalDevice`
+  (marks the makers' own devices once)
 - **An off switch that remembers.** `AnalyticsSwitch` drops everything while the person has turned
   measurement off, keeps that choice across launches, and erases what was buffered
 - **Zero external dependencies.** Vendor SDKs (Firebase, PostHog) live in separate packages,
@@ -47,22 +54,42 @@ Declare the event, and how it is counted:
 ```yaml
 # analytics.yaml
 version: 1
-dialect: ga4
+dialect: envelope
+include: common             # first_open, paywall_*, review_requested, …
 swift:
   event_type: AppEvent
 
+extend:
+  - name: screen_viewed
+    parameters:
+      screen:
+        values: [home]      # add values to the shared enums marked extensible
+
 events:
-  - name: paywall_shown
-    kind: impression        # screen | impression | interaction | outcome
+  - name: entry_saved
+    kind: outcome           # screen | impression | interaction | outcome
     dedup: always           # session | install | always
-    description: The paywall was actually seen
+    description: An entry was saved
 ```
 
 Generate the Swift, and commit the result — a change to analytics is a change to *what you decided
 to measure*, and the diff is the only review artifact:
 
 ```sh
-Scripts/analytics-gen.py generate --schema analytics.yaml --out Sources/App/Generated/AppAnalytics.swift
+Scripts/analytics-gen.py generate --schema analytics.yaml --out Sources/App/Generated/AppAnalytics.swift \
+  --json server/catalog.json --ts server/catalog.ts
+```
+
+Wire the destination once, at launch:
+
+```swift
+let sink = AnalyticsBatchSink(
+    app: "kotoakari",
+    endpoint: URL(string: "https://api.example.com/v1/events")!,
+    authorize: { ["Authorization": "Bearer \(try await auth.idToken())"] }
+)
+let analytics = AnalyticsSwitch(DedupingAnalytics(sink)) { await sink.purge() }
+FirstLaunch.recordLaunch(sendingTo: analytics)
 ```
 
 Then the whole call site is one modifier:
@@ -70,30 +97,28 @@ Then the whole call site is one modifier:
 ```swift
 import AnalyticsSwiftUI
 
-PaywallView().trackScreen(.paywallShown)
+HomeView().trackScreen(.screenViewed(screen: .home))
 ```
 
 ## Documentation
 
-[**API reference and guides**](https://no-problem-dev.github.io/swift-analytics/documentation/) —
-including [Getting Started](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/gettingstarted/),
-[Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/),
-and [What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/).
+The API reference and the guides (Getting Started, Counting Rules, What Not to Send) are the DocC catalogs under `Sources/*/*.docc/`. Open them in Xcode with Product › Build Documentation.
 
-The catalog file format — including the `first_party` dialect, the `token` parameter type, and the
-shape of the `--json` output — is specified, in Japanese, in [Schema/SCHEMA.md](./Schema/SCHEMA.md).
+The catalog file format — including `include` / `extend`, the dialects, the `token` parameter type,
+and the shape of the `--json` and `--ts` output — is specified, in Japanese, in
+[Schema/SCHEMA.md](./Schema/SCHEMA.md). The envelope is [Schema/common/ENVELOPE.md](./Schema/common/ENVELOPE.md).
 
 ## Installation
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/no-problem-dev/swift-analytics.git", .upToNextMinor(from: "0.3.0"))
 ```
 
 | Product | Contents | Depends on |
 |---|---|---|
 | `AnalyticsCore` | Vocabulary, ports, counting rules | nothing |
 | `AnalyticsSwiftUI` | Firing from views, on-device log viewer | SwiftUI |
-| `AnalyticsBatchSink` | Keeps events on the device and sends them in batches to your own server | `AnalyticsCore` |
+| `AnalyticsBatchSink` | Keeps events on the device and sends them in batches, in the fixed envelope, to your own server | `AnalyticsCore` |
 | `AnalyticsTesting` | Test doubles | nothing |
 
 Vendor adapters are separate packages — see

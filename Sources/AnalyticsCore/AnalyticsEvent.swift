@@ -33,16 +33,22 @@ public protocol AnalyticsEvent: Sendable {
 
     /// The window over which repeats collapse into one. **Firing points never state this.**
     var dedup: DedupScope { get }
+
+    /// Key under which "once ever" and "once per launch" are remembered.
+    ///
+    /// The default (in an extension) uses the name alone and ignores parameters: "responded to a
+    /// notification for the first time" happens once whether the stage was `low` or `soon`, not
+    /// once per stage.
+    ///
+    /// Implement it in the conforming type only when each parameter value deserves its own count.
+    /// It is a requirement, not only an extension member, so ``DedupingAnalytics`` — which holds
+    /// the event as `any AnalyticsEvent` — reaches the conforming type's own key. (Up to 0.2 it
+    /// lived only in the extension, and a key written on the type was silently ignored.)
+    var dedupKey: String { get }
 }
 
 public extension AnalyticsEvent {
 
-    /// Key under which "once ever" and "once per launch" are remembered.
-    ///
-    /// The default uses the name alone and ignores parameters: "responded to a notification for
-    /// the first time" happens once whether the stage was `low` or `soon`, not once per stage.
-    ///
-    /// Override it in the conforming type only when each parameter value deserves its own count.
     var dedupKey: String { name }
 
     /// One-line rendering for logs and assertions.
