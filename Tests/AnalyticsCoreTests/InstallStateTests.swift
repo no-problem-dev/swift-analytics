@@ -34,12 +34,28 @@ struct InstallIDTests {
 @Suite("前の版の install ID を引き継ぐ")
 struct InstallIDAdoptTests {
 
-    @Test("まだ無ければ渡した ID を小文字で保存し、current がそれを返す")
+    @Test("まだ無ければ渡した ID を大小を変えずに保存し、current がそれを返す")
     func adoptsWhenEmpty() {
         let defaults = makeDefaults()
         let legacy = "8C1F2A4E-0B7D-4E8A-9C3B-1D2E3F405162"
         #expect(InstallID.adopt(legacy, defaults: defaults))
-        #expect(InstallID.current(defaults: defaults) == legacy.lowercased())
+        #expect(InstallID.current(defaults: defaults) == legacy)
+    }
+
+    @Test("小文字の ID も大小の混ざった ID もそのまま保つ")
+    func keepsCaseAsPassed() {
+        for legacy in ["8c1f2a4e-0b7d-4e8a-9c3b-1d2e3f405162", "8c1F2a4E-0B7d-4e8A-9c3B-1d2E3f405162"] {
+            let defaults = makeDefaults()
+            #expect(InstallID.adopt(legacy, defaults: defaults))
+            #expect(InstallID.current(defaults: defaults) == legacy)
+        }
+    }
+
+    @Test("引き継がなければ、作る ID は今まで通り小文字")
+    func madeIDStaysLowercase() {
+        let defaults = makeDefaults()
+        let made = InstallID.current(defaults: defaults)
+        #expect(made == made.lowercased())
     }
 
     @Test("もうあれば替えない。UUID でない値は受けない")
