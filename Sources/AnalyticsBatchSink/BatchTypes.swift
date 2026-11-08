@@ -1,37 +1,103 @@
+import AnalyticsCore
 import Foundation
 
-/// What the app's send closure reports back about one batch.
+/// What the device says about itself in the head of every batch (`Schema/common/ENVELOPE.md`).
 ///
-/// The sink never reads HTTP. The app maps its own responses onto these three cases, and each
-/// case decides what happens to the batch.
+/// ``current(defaults:bundle:locale:)`` fills it from the running app; tests and previews make one
+/// by hand.
+public struct EnvelopeContext: Sendable, Equatable {
+
+    /// `InstallID`.
+    public var installID: String
+    /// `CFBundleShortVersionString`.
+    public var appVersion: String
+    /// `CFBundleVersion`.
+    public var build: String
+    /// `BuildChannel`.
+    public var channel: BuildChannel
+    /// The device's language (`Locale.current.language.languageCode`), such as `ja`.
+    public var lang: String
+    /// The device's region (`Locale.current.region`), such as `JP`.
+    public var region: String
+
+    public init(installID: String, appVersion: String, build: String, channel: BuildChannel, lang: String, region: String) {
+        self.installID = installID
+        self.appVersion = appVersion
+        self.build = build
+        self.channel = channel
+        self.lang = lang
+        self.region = region
+    }
+
+    /// Read from the running app. An item it cannot find is sent as an empty string.
+    public static func current(
+        defaults: UserDefaults = .standard,
+        bundle: Bundle = .main,
+        locale: Locale = .current
+    ) -> EnvelopeContext {
+        let info = bundle.infoDictionary ?? [:]
+        return EnvelopeContext(
+            installID: InstallID.current(defaults: defaults),
+            appVersion: info["CFBundleShortVersionString"] as? String ?? "",
+            build: info["CFBundleVersion"] as? String ?? "",
+            channel: .current,
+            lang: locale.language.languageCode?.identifier ?? "",
+            region: locale.region?.identifier ?? ""
+        )
+    }
+}
+
+/// How a request body reaches the receiver. ``urlSession`` unless a test puts something else in.
+public struct BatchTransport: Sendable {
+
+    let perform: @Sendable (URLRequest) async throws -> HTTPURLResponse
+
+    /// - Parameter perform: Sends the request and returns the response. Throw when it never
+    ///   arrived (offline, timed out)
+    public init(_ perform: @escaping @Sendable (URLRequest) async throws -> HTTPURLResponse) {
+        self.perform = perform
+    }
+
+    /// `URLSession.shared`.
+    public static let urlSession = BatchTransport { request in
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        return http
+    }
+}
+
+/// What became of one batch, read from the receiver's response.
 ///
-/// | Case | The batch | Next attempt |
+/// | Response | The batch | Next attempt |
 /// |---|---|---|
-/// | ``delivered`` | Removed from the spool | After ``BatchPolicy/minimumInterval`` |
-/// | ``rejected`` | **Removed, unsent** — sending it again would only be refused again | After ``BatchPolicy/minimumInterval`` |
-/// | ``retryLater(after:)`` | Kept | After the longer of the given wait and ``BatchPolicy/minimumInterval`` |
+/// | `2xx` | Removed from the spool | After ``BatchPolicy/minimumInterval`` |
+/// | `401`・`403`・`408`・`429`・`5xx` | Kept | After the longer of `Retry-After` and ``BatchPolicy/minimumInterval`` |
+/// | Any other status | **Removed, unsent** — sending it again would only be refused again | After ``BatchPolicy/minimumInterval`` |
 ///
-/// Throwing from the closure means the batch never reached anyone (offline, timed out). It is
-/// kept, as with ``retryLater(after:)`` with no wait given.
-///
-/// A typical mapping: `2xx` is ``delivered``, `400` and `413` are ``rejected``, `429` and `5xx`
-/// are ``retryLater(after:)`` with the `Retry-After` header if there is one.
-public enum BatchOutcome: Sendable, Equatable {
-
-    /// The receiver took the batch.
+/// No response at all (offline, timed out, the authorization closure threw) keeps the batch, as
+/// with a retry and no `Retry-After`. `401` and `403` are kept rather than dropped: a token that
+/// failed to refresh should not cost the events.
+enum BatchOutcome: Sendable, Equatable {
     case delivered
-
-    /// The receiver refused the batch as malformed. It is thrown away.
     case rejected
-
-    /// The receiver is busy or failing. The batch is kept for a later attempt.
     case retryLater(after: Duration?)
+
+    init(status: Int, retryAfter: String?) {
+        switch status {
+        case 200..<300:
+            self = .delivered
+        case 401, 403, 408, 429, 500..<600:
+            self = .retryLater(after: retryAfter.flatMap(Int.init).map { .seconds(max(0, $0)) })
+        default:
+            self = .rejected
+        }
+    }
 }
 
 /// How much goes in one batch, how much is kept while sending is impossible, and how often to try.
 ///
-/// The defaults are the ones the first-party receiver in `tabisaki` enforces: 100 events and
-/// 64 KB per request, 500 kept on the device, and nothing sent within 60 seconds of the last try.
+/// The defaults are the ones the first-party receivers enforce: 100 events and 64 KB per request,
+/// 500 kept on the device, and nothing sent within 60 seconds of the last try.
 public struct BatchPolicy: Sendable, Equatable {
 
     /// Most events in one batch.
@@ -66,66 +132,6 @@ public struct BatchPolicy: Sendable, Equatable {
 
     /// 100 events, 64 KB, 500 kept, sends itself at 100, 60 seconds between attempts.
     public static let standard = BatchPolicy()
-}
-
-/// The JSON keys a batch is written with.
-///
-/// The defaults produce this, with the header's fields and the person's properties at the top
-/// level:
-///
-/// ```json
-/// {
-///   "install": "ins_8f2c…", "plan": "free",
-///   "events": [
-///     { "id": "…", "name": "paywall_shown", "at": 1790000000.0,
-///       "params": { "placement": "settings" } }
-///   ]
-/// }
-/// ```
-///
-/// Anything returned by the sink's `stamp` closure sits next to `id` and `name` in each event.
-/// When a stamp, a header field, or a property uses the same key as something the sink writes,
-/// the sink's own key wins.
-public struct BatchFormat: Sendable, Equatable {
-
-    /// How the time an event happened is written.
-    public enum Time: Sendable, Equatable {
-        /// Seconds since 1970 as a fractional number.
-        case seconds
-        /// Milliseconds since 1970 as a whole number.
-        case milliseconds
-    }
-
-    public var eventsKey: String
-    public var idKey: String
-    public var nameKey: String
-    public var timeKey: String
-    public var time: Time
-    public var parametersKey: String
-
-    /// Where the person's properties go. `nil` puts each one at the top level of the batch.
-    public var propertiesKey: String?
-
-    public init(
-        eventsKey: String = "events",
-        idKey: String = "id",
-        nameKey: String = "name",
-        timeKey: String = "at",
-        time: Time = .seconds,
-        parametersKey: String = "params",
-        propertiesKey: String? = nil
-    ) {
-        self.eventsKey = eventsKey
-        self.idKey = idKey
-        self.nameKey = nameKey
-        self.timeKey = timeKey
-        self.time = time
-        self.parametersKey = parametersKey
-        self.propertiesKey = propertiesKey
-    }
-
-    /// `events` / `id` / `name` / `at` in seconds / `params`, properties at the top level.
-    public static let standard = BatchFormat()
 }
 
 /// What one call to ``AnalyticsBatchSink/flush()`` did.

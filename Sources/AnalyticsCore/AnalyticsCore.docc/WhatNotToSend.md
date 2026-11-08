@@ -5,8 +5,8 @@ Domain facts and free-form strings stay out of the event stream, and the archite
 ## Overview
 
 ``EventKind`` has four cases — a screen was reached, an element was seen, something was pressed,
-something finished. There is no case for "purchased", "household created", or "notification sent".
-The omission is deliberate.
+something finished. There is no case for "household created" or "notification sent". The omission
+is deliberate.
 
 ## Facts belong to the server
 
@@ -17,6 +17,11 @@ neither series can be corrected against the other.
 
 Count facts with SQL against the server's data. Keep the event stream for the things only the
 client knows: what was on screen, what was touched, what was abandoned.
+
+A purchase is one of those client-side things in one respect: *which paywall* it happened on.
+The common catalog's `purchase_completed` is sent from the client for that reason, so conversion
+can be read per paywall `source`. Revenue and renewals are still counted from RevenueCat, never
+from these events. Keep `facts` for what only the server has.
 
 The practical payoff is architectural. Because facts are not events, **no analytics call has to be
 threaded into the use-case layer.** Instrumentation lives at the surface, where the surface-level

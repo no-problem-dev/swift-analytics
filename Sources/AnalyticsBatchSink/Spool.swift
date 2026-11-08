@@ -3,12 +3,13 @@ import Foundation
 import os
 
 /// A JSON value as it goes on the wire: no tags, so `3`, `"3"` and `true` read as themselves.
+///
+/// Flat on purpose — `props` holds strings, numbers, and booleans only (`ENVELOPE.md`).
 enum WireValue: Codable, Sendable, Equatable {
     case string(String)
     case int(Int)
     case double(Double)
     case bool(Bool)
-    case object([String: WireValue])
 
     init(_ value: AnalyticsValue) {
         switch value {
@@ -24,8 +25,7 @@ enum WireValue: Codable, Sendable, Equatable {
         if let flag = try? container.decode(Bool.self) { self = .bool(flag); return }
         if let count = try? container.decode(Int.self) { self = .int(count); return }
         if let number = try? container.decode(Double.self) { self = .double(number); return }
-        if let text = try? container.decode(String.self) { self = .string(text); return }
-        self = .object(try container.decode([String: WireValue].self))
+        self = .string(try container.decode(String.self))
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -35,24 +35,36 @@ enum WireValue: Codable, Sendable, Equatable {
         case let .int(count): try container.encode(count)
         case let .double(number): try container.encode(number)
         case let .bool(flag): try container.encode(flag)
-        case let .object(object): try container.encode(object)
         }
     }
 }
 
 /// One occurrence as kept on the device, before it is laid out in a batch.
+///
+/// The app version, build, and uid are the ones **when it happened**. A batch carries one of each
+/// in its head, so events that differ in them go in separate batches.
 struct SpooledEvent: Codable, Sendable, Equatable {
     let id: String
     let name: String
-    let at: Double
-    let parameters: [String: WireValue]
-    let stamp: [String: WireValue]
+    /// Milliseconds since 1970, UTC.
+    let occurredAt: Int
+    let props: [String: WireValue]
+    let appVersion: String
+    let build: String
+    let uid: String?
+
+    struct Origin: Equatable {
+        let appVersion: String
+        let build: String
+        let uid: String?
+    }
+
+    var origin: Origin { Origin(appVersion: appVersion, build: build, uid: uid) }
 }
 
 /// Everything the sink holds, behind one lock.
 struct SpoolState: Sendable {
     var events: [SpooledEvent] = []
-    var properties: [String: WireValue] = [:]
     /// Bumped on every change, so a write that is already current can be skipped.
     var generation = 0
     var isFlushing = false
@@ -72,10 +84,12 @@ struct SpoolState: Sendable {
 /// disk however the requests were ordered.
 actor SpoolFile {
 
+    /// What is on disk. A file in another format (0.2 wrote `format: 1`) is not read: its events
+    /// were laid out for a different envelope.
     private struct Contents: Codable {
-        var format = 1
+        static let currentFormat = 2
+        var format = Contents.currentFormat
         var events: [SpooledEvent]
-        var properties: [String: WireValue]
     }
 
     let url: URL
@@ -85,18 +99,19 @@ actor SpoolFile {
         url = directory.appending(path: "events.json")
     }
 
-    nonisolated func load() -> (events: [SpooledEvent], properties: [String: WireValue]) {
+    nonisolated func load() -> [SpooledEvent] {
         guard let data = try? Data(contentsOf: url),
-              let contents = try? JSONDecoder().decode(Contents.self, from: data)
-        else { return ([], [:]) }
-        return (contents.events, contents.properties)
+              let contents = try? JSONDecoder().decode(Contents.self, from: data),
+              contents.format == Contents.currentFormat
+        else { return [] }
+        return contents.events
     }
 
     func persist(from state: OSAllocatedUnfairLock<SpoolState>) {
         let snapshot = state.withLock { $0 }
         guard snapshot.generation != writtenGeneration else { return }
         do {
-            if snapshot.events.isEmpty && snapshot.properties.isEmpty {
+            if snapshot.events.isEmpty {
                 if FileManager.default.fileExists(atPath: url.path) {
                     try FileManager.default.removeItem(at: url)
                 }
@@ -104,7 +119,7 @@ actor SpoolFile {
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true
                 )
-                let contents = Contents(events: snapshot.events, properties: snapshot.properties)
+                let contents = Contents(events: snapshot.events)
                 try JSONEncoder().encode(contents).write(to: url, options: .atomic)
             }
             writtenGeneration = snapshot.generation
@@ -115,14 +130,16 @@ actor SpoolFile {
     }
 }
 
-/// Lays events out as one request body, measuring as it goes.
+/// Lays events out as one request body in the fixed envelope, measuring as it goes.
 ///
 /// The body is spliced from separately encoded pieces rather than encoded whole, so the size of
 /// each event is known exactly and a batch can be cut at ``BatchPolicy/maxBytes`` without encoding
 /// it again for every event added.
 struct BatchLayout {
 
-    let format: BatchFormat
+    /// `schema_version` in the head. Raise it when the envelope's shape changes.
+    static let schemaVersion = 1
+
     let policy: BatchPolicy
 
     private static let encoder: JSONEncoder = {
@@ -137,40 +154,33 @@ struct BatchLayout {
         var oversized: [String]
     }
 
-    func header(
-        fields: [String: AnalyticsValue],
-        properties: [String: WireValue]
-    ) -> [String: WireValue] {
-        var top: [String: WireValue] = [:]
-        if let key = format.propertiesKey {
-            if !properties.isEmpty { top[key] = .object(properties) }
-        } else {
-            top.merge(properties) { _, new in new }
-        }
-        top.merge(fields.mapValues(WireValue.init)) { _, new in new }
-        top[format.eventsKey] = nil
+    func header(app: String, context: EnvelopeContext, origin: SpooledEvent.Origin, sentAt: Date) -> [String: WireValue] {
+        var top: [String: WireValue] = [
+            "schema_version": .int(Self.schemaVersion),
+            "app": .string(app),
+            "install_id": .string(context.installID),
+            "app_version": .string(origin.appVersion),
+            "build": .string(origin.build),
+            "channel": .string(context.channel.rawValue),
+            "lang": .string(context.lang),
+            "region": .string(context.region),
+            "sent_at": .int(Self.milliseconds(sentAt)),
+        ]
+        if let uid = origin.uid { top["uid"] = .string(uid) }
         return top
     }
 
-    func record(_ event: SpooledEvent) -> [String: WireValue] {
-        var record = event.stamp
-        record[format.idKey] = .string(event.id)
-        record[format.nameKey] = .string(event.name)
-        switch format.time {
-        case .seconds: record[format.timeKey] = .double(event.at)
-        case .milliseconds: record[format.timeKey] = .int(Int((event.at * 1000).rounded()))
-        }
-        record[format.parametersKey] = .object(event.parameters)
-        return record
+    private struct Record: Encodable {
+        let id: String
+        let name: String
+        let occurred_at: Int
+        let props: [String: WireValue]
     }
 
     func batch(of candidates: [SpooledEvent], header: [String: WireValue]) throws -> Batch {
         let headerData = try Self.encoder.encode(header)
-        let eventsKey = try Self.encoder.encode(format.eventsKey)
         var opening = Data(headerData.dropLast())
-        if !header.isEmpty { opening.append(UInt8(ascii: ",")) }
-        opening.append(eventsKey)
-        opening.append(contentsOf: Array(":[".utf8))
+        opening.append(contentsOf: Array(#","events":["#.utf8))
         let closing = Data("]}".utf8)
 
         var size = opening.count + closing.count
@@ -179,7 +189,9 @@ struct BatchLayout {
         var oversized: [String] = []
 
         for event in candidates.prefix(policy.maxEvents) {
-            let piece = try Self.encoder.encode(record(event))
+            let piece = try Self.encoder.encode(
+                Record(id: event.id, name: event.name, occurred_at: event.occurredAt, props: event.props)
+            )
             let separator = pieces.isEmpty ? 0 : 1
             if size + separator + piece.count > policy.maxBytes {
                 if pieces.isEmpty, opening.count + closing.count + piece.count > policy.maxBytes {
@@ -200,6 +212,10 @@ struct BatchLayout {
         }
         body.append(closing)
         return Batch(body: body, included: included, oversized: oversized)
+    }
+
+    static func milliseconds(_ date: Date) -> Int {
+        Int((date.timeIntervalSince1970 * 1000).rounded())
     }
 }
 

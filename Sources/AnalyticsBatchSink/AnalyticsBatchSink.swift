@@ -2,44 +2,64 @@ import AnalyticsCore
 import Foundation
 import os
 
-/// A destination that keeps occurrences in a file on the device and sends them in batches.
+/// A destination that keeps occurrences in a file on the device and sends them in batches to the
+/// app's own receiver, **always in the one envelope** described in `Schema/common/ENVELOPE.md`.
 ///
-/// It owns three things — **keeping, batching, and trying again** — and nothing about where the
-/// batches go. The URL, authentication, and how a response is read are the app's, handed in as
-/// one closure that takes a request body and says what became of it:
+/// The app hands over where to send, how to authorize, and its name — nothing about the shape:
 ///
 /// ```swift
 /// let sink = AnalyticsBatchSink(
-///     directory: appSupport.appending(path: "AppData/events"),
-///     header: { await telemetryHeader() },          // install ID, app version, plan, …
-///     send: { body in try await server.postEvents(body) }   // -> BatchOutcome
+///     app: "kotoakari",
+///     endpoint: URL(string: "https://api.example.com/v1/events")!,
+///     authorize: { ["Authorization": "Bearer \(try await auth.idToken())"] },
+///     uid: { Auth.auth().currentUser?.uid }      // leave out when behaviour is not tied to purchases
 /// )
 /// let analytics = AnalyticsSwitch(DedupingAnalytics(sink)) { await sink.purge() }
+/// FirstLaunch.recordLaunch(sendingTo: analytics)
 ///
 /// // After launch, and when the scene moves to the background
 /// await sink.flush()
 /// ```
 ///
+/// A batch goes out like this:
+///
+/// ```json
+/// { "schema_version": 1, "app": "kotoakari", "install_id": "8c1f…", "uid": "…",
+///   "app_version": "1.2.0", "build": "45", "channel": "appstore", "lang": "ja", "region": "JP",
+///   "sent_at": 1762560000000,
+///   "events": [ { "id": "…", "name": "paywall_shown", "occurred_at": 1762559990000,
+///                 "props": { "source": "onboarding" } } ] }
+/// ```
+///
+/// There is no setting for the keys or the unit of time. Up to 0.2 they could be chosen, and the
+/// apps ended up with seven different shapes.
+///
 /// ## What is kept and when it goes
 ///
-/// - Each occurrence is given an ID (``BatchFormat/idKey``) and the time it happened as it is
-///   tracked, so a batch that reaches the receiver twice can be told apart from two occurrences
+/// - Each occurrence is given an `id` (a UUID) and the time it happened (`occurred_at`, ms) as it
+///   is tracked, along with the app version, build, and uid at that moment. The receiver uses the
+///   `id` to keep a batch that arrives twice from counting twice
 /// - The spool is a JSON file in `directory`, written off the calling thread after each change,
 ///   and read back when the sink is made. Past ``BatchPolicy/capacity`` the oldest are dropped
 /// - ``flush()`` sends batches of up to ``BatchPolicy/maxEvents`` and ``BatchPolicy/maxBytes``
-///   until the spool is empty or one fails. Reaching ``BatchPolicy/flushThreshold`` starts a
-///   flush by itself
+///   until the spool is empty or one fails. Events tracked under another app version, build, or
+///   uid go in a batch of their own, since the head carries one of each. Reaching
+///   ``BatchPolicy/flushThreshold`` starts a flush by itself
 /// - **No attempt starts within ``BatchPolicy/minimumInterval`` of the previous one**, whoever
 ///   asked. Nothing here wakes the device or schedules background work; what is not sent goes
 ///   with the next flush
+/// - How a response is read is fixed: see the table on the outcome of a batch in the
+///   documentation of this module
 ///
-/// The person's properties (``AnalyticsUserProperty``) are not events. The latest value of each
-/// is kept and written into the head of every batch, so the receiver reads the current state
-/// once per batch rather than once per event.
+/// ## Properties are not sent
+///
+/// The envelope has no place for `AnalyticsUserProperty`, so ``setUserProperty(_:)`` does
+/// nothing here. State such as the plan is the server's (RevenueCat for purchases); send a
+/// property to a destination that keeps them, through `MultiplexAnalytics`.
 ///
 /// ## Why a class and not an actor
 ///
-/// ``track(_:)`` is synchronous, as the ``AnalyticsClient`` port requires. Hopping onto an actor
+/// ``track(_:)`` is synchronous, as the `AnalyticsClient` port requires. Hopping onto an actor
 /// from there would take a task per occurrence, and tasks do not keep the order they were made in
 /// — two taps would reach the spool in either order. The spool is appended to in place under a
 /// lock instead, and only the file and the network are left to run elsewhere.
@@ -49,59 +69,76 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
     private let file: SpoolFile
     private let layout: BatchLayout
     private let policy: BatchPolicy
-    private let header: @Sendable () async -> [String: AnalyticsValue]
-    private let stamp: @Sendable (any AnalyticsEvent, Date) -> [String: AnalyticsValue]
+    private let app: String
+    private let endpoint: URL
+    private let authorize: @Sendable () async throws -> [String: String]
+    private let uid: @Sendable () -> String?
+    private let context: @Sendable () -> EnvelopeContext
+    private let transport: BatchTransport
     private let makeID: @Sendable () -> String
     private let now: @Sendable () -> Date
-    private let send: @Sendable (Data) async throws -> BatchOutcome
 
     /// - Parameters:
+    ///   - app: The app's short name in snake_case (`kotoakari`). The receiver tells products
+    ///     apart by it
+    ///   - endpoint: Where batches are posted
+    ///   - authorize: Header fields for each request, asked for just before it is sent — usually
+    ///     `Authorization`. Throw when none can be made now; the batch is kept for later
+    ///   - uid: The signed-in person's uid, read as each event is tracked. Leave it out for apps
+    ///     that do not tie behaviour to purchases
     ///   - directory: Where the spool file (`events.json`) is kept. Created when first needed.
     ///     Give the sink a directory of its own
     ///   - policy: Batch sizes, how much to keep, how often to try
-    ///   - format: The JSON keys a batch is written with
-    ///   - header: Fields for the head of each batch, asked for when the batch is laid out —
-    ///     install ID, app and OS version, catalog version, and the like
-    ///   - stamp: Extra fields for each event, decided when it is tracked, such as days since
-    ///     install. Never anything a person wrote
-    ///   - makeID: The ID each event is given
-    ///   - now: The clock, for the time an event happened and for spacing attempts
-    ///   - send: Posts one body and reports what became of it. Throw when it never arrived
+    ///   - context: The head of the envelope that describes the device. Read as each event is
+    ///     tracked (app version and build) and as each batch is laid out (the rest)
+    ///   - transport: How a request goes out
+    ///   - makeID: The `id` each event is given
+    ///   - now: The clock, for `occurred_at`, `sent_at`, and spacing attempts
     public init(
-        directory: URL,
+        app: String,
+        endpoint: URL,
+        authorize: @escaping @Sendable () async throws -> [String: String] = { [:] },
+        uid: @escaping @Sendable () -> String? = { nil },
+        directory: URL = URL.applicationSupportDirectory.appending(path: "swift-analytics/events"),
         policy: BatchPolicy = .standard,
-        format: BatchFormat = .standard,
-        header: @escaping @Sendable () async -> [String: AnalyticsValue] = { [:] },
-        stamp: @escaping @Sendable (any AnalyticsEvent, Date) -> [String: AnalyticsValue] = { _, _ in [:] },
+        context: @escaping @Sendable () -> EnvelopeContext = { .current() },
+        transport: BatchTransport = .urlSession,
         makeID: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() },
-        now: @escaping @Sendable () -> Date = { Date() },
-        send: @escaping @Sendable (Data) async throws -> BatchOutcome
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
+        precondition(
+            app.wholeMatch(of: /[a-z][a-z0-9_]*/) != nil,
+            "AnalyticsBatchSink: app は snake_case の短い名前（\(app)）"
+        )
         let file = SpoolFile(directory: directory)
-        let stored = file.load()
-        var initial = SpoolState(events: stored.events, properties: stored.properties)
+        var initial = SpoolState(events: file.load())
         initial.trim(to: policy.capacity)
         self.state = OSAllocatedUnfairLock(initialState: initial)
         self.file = file
-        self.layout = BatchLayout(format: format, policy: policy)
+        self.layout = BatchLayout(policy: policy)
         self.policy = policy
-        self.header = header
-        self.stamp = stamp
+        self.app = app
+        self.endpoint = endpoint
+        self.authorize = authorize
+        self.uid = uid
+        self.context = context
+        self.transport = transport
         self.makeID = makeID
         self.now = now
-        self.send = send
     }
 
     // MARK: - AnalyticsClient
 
     public func track(_ event: any AnalyticsEvent) {
-        let moment = now()
+        let device = context()
         let spooled = SpooledEvent(
             id: makeID(),
             name: event.name,
-            at: moment.timeIntervalSince1970,
-            parameters: event.parameters.mapValues(WireValue.init),
-            stamp: stamp(event, moment).mapValues(WireValue.init)
+            occurredAt: BatchLayout.milliseconds(now()),
+            props: event.parameters.mapValues(WireValue.init),
+            appVersion: device.appVersion,
+            build: device.build,
+            uid: uid()
         )
         let capacity = policy.capacity
         let threshold = policy.flushThreshold
@@ -122,17 +159,8 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
         }
     }
 
-    public func setUserProperty(_ property: any AnalyticsUserProperty) {
-        let name = property.name
-        let value = WireValue.string(property.value)
-        let changed = state.withLock { state -> Bool in
-            guard state.properties[name] != value else { return false }
-            state.properties[name] = value
-            state.generation += 1
-            return true
-        }
-        if changed { scheduleSave() }
-    }
+    /// Does nothing: the envelope carries no properties (see "Properties are not sent").
+    public func setUserProperty(_ property: any AnalyticsUserProperty) {}
 
     // MARK: - Sending
 
@@ -160,15 +188,14 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
         let interval = policy.minimumInterval.timeInterval
 
         while true {
-            let (candidates, properties) = state.withLock { state in
-                (Array(state.events.prefix(policy.maxEvents)), state.properties)
+            let candidates = state.withLock { state -> [SpooledEvent] in
+                guard let origin = state.events.first?.origin else { return [] }
+                return Array(state.events.prefix(policy.maxEvents).prefix { $0.origin == origin })
             }
-            guard !candidates.isEmpty else { break }
+            guard let origin = candidates.first?.origin else { break }
 
-            let fields = await header()
-            guard let batch = try? layout.batch(
-                of: candidates, header: layout.header(fields: fields, properties: properties)
-            ) else { break }
+            let header = layout.header(app: app, context: context(), origin: origin, sentAt: now())
+            guard let batch = try? layout.batch(of: candidates, header: header) else { break }
             if !batch.oversized.isEmpty {
                 remove(batch.oversized)
                 discarded += batch.oversized.count
@@ -179,7 +206,7 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
             state.withLock { $0.notBefore = attempt.addingTimeInterval(interval) }
             let outcome: BatchOutcome
             do {
-                outcome = try await send(batch.body)
+                outcome = try await post(batch.body)
             } catch {
                 status = .deferred(until: attempt.addingTimeInterval(interval))
                 break
@@ -207,14 +234,13 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
         return FlushReport(status: status, delivered: delivered, discarded: discarded, remaining: pendingCount)
     }
 
-    /// Erases everything kept — events and properties — from memory and from the file.
+    /// Erases everything kept from memory and from the file.
     ///
-    /// For turning measurement off (``AnalyticsCore/AnalyticsSwitch``) and for deleting an
+    /// For turning measurement off (`AnalyticsSwitch`) and for deleting an
     /// account. A batch already on its way when this runs may still arrive.
     public func purge() async {
         state.withLock { state in
             state.events.removeAll()
-            state.properties.removeAll()
             state.notBefore = nil
             state.generation += 1
         }
@@ -229,6 +255,18 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
     /// How many events are kept and not yet sent.
     public var pendingCount: Int {
         state.withLock { $0.events.count }
+    }
+
+    private func post(_ body: Data) async throws -> BatchOutcome {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (field, value) in try await authorize() {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        let response = try await transport.perform(request)
+        return BatchOutcome(status: response.statusCode, retryAfter: response.value(forHTTPHeaderField: "Retry-After"))
     }
 
     private func remove(_ ids: [String]) {

@@ -6,17 +6,21 @@
 # - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）
 # - 引数はアプリが足してよい（共通の引数は消せない・型は変えられない）
 # - 時刻・人・アプリの版などは封筒（Envelope）が持つ。出来事の引数に入れない
+# - `sent_by: package` の出来事は AnalyticsCore が自分で送る（FirstLaunch・InternalDevice）。
+#   アプリの生成物の Swift には出さず、--json と --ts にだけ載る
 
 version: 1
 name: common
+dialect: envelope
 
 events:
   # ---- 入口 ----
   - name: first_open
     kind: outcome
     dedup: install
+    sent_by: package
     description: このインストールで初めて起動した。継続率と集団の起点
-    trigger: 起動の最初（FirstLaunch が判定）
+    trigger: 起動の最初（FirstLaunch.recordLaunch が判定して送る）
     parameters:
       kind:
         type: enum
@@ -27,8 +31,9 @@ events:
   - name: internal_device
     kind: outcome
     dedup: install
+    sent_by: package
     description: 作り手の端末。集計から外す
-    trigger: 隠しスイッチを入れたとき
+    trigger: 隠しスイッチを入れたとき（InternalDevice.mark が保存して1回だけ送る）
 
   - name: screen_viewed
     kind: screen

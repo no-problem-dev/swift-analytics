@@ -10,25 +10,31 @@
     "numbers": 1,
     "tokens": 2
   },
+  "includes": [],
   "events": [
     {
       "name": "app_opened",
       "kind": "screen",
       "dedup": "session",
+      "origin": "app",
+      "sentBy": "app",
       "parameters": [
         {
           "key": "first_launch",
+          "origin": "app",
           "type": "flag"
         },
         {
           "key": "entry",
+          "origin": "app",
           "type": "enum",
           "values": [
             "icon",
             "notification",
             "widget",
             "link"
-          ]
+          ],
+          "extensible": false
         }
       ]
     },
@@ -36,18 +42,23 @@
       "name": "trip_created",
       "kind": "outcome",
       "dedup": "always",
+      "origin": "app",
+      "sentBy": "app",
       "parameters": [
         {
           "key": "source",
+          "origin": "app",
           "type": "enum",
           "values": [
             "destination",
             "paste",
             "sample_copy"
-          ]
+          ],
+          "extensible": false
         },
         {
           "key": "nth",
+          "origin": "app",
           "type": "bucket",
           "edges": [
             1,
@@ -67,21 +78,26 @@
       "name": "block_seen",
       "kind": "impression",
       "dedup": "always",
+      "origin": "app",
+      "sentBy": "app",
       "parameters": [
         {
           "key": "render_id",
+          "origin": "app",
           "type": "token",
           "pattern": "[A-Za-z0-9_-]{8,40}",
           "maxLength": 64
         },
         {
           "key": "block_key",
+          "origin": "app",
           "type": "token",
           "pattern": "[a-z]+:[A-Za-z0-9_-]{1,56}",
           "maxLength": 64
         },
         {
           "key": "position",
+          "origin": "app",
           "type": "bucket",
           "edges": [
             1,
@@ -105,18 +121,23 @@
       "name": "consult_answer_finished",
       "kind": "outcome",
       "dedup": "always",
+      "origin": "app",
+      "sentBy": "app",
       "parameters": [
         {
           "key": "result",
+          "origin": "app",
           "type": "enum",
           "values": [
             "completed",
             "failed",
             "interrupted"
-          ]
+          ],
+          "extensible": false
         },
         {
           "key": "seconds_to_first_reply",
+          "origin": "app",
           "type": "number"
         }
       ]

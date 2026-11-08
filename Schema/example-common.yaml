@@ -1,0 +1,42 @@
+# 共通カタログを取り込むアプリのカタログの例。仕様は SCHEMA.md の「include と extend」。
+#
+# `include: common` で Schema/common/common.yaml の出来事が全部入る。`extend:` で、
+# `extensible: true` の enum に値を、共通の出来事に引数を足す。
+
+version: 1
+dialect: envelope
+include: common
+
+swift:
+  event_type: JournalEvent
+  property_type: JournalUserProperty
+  module: JournalEvents
+  swiftui: false
+
+extend:
+  - name: screen_viewed
+    parameters:
+      screen:
+        values: [home, entry]
+  - name: paywall_shown
+    parameters:
+      source:
+        values: [entry_limit]
+      variant:
+        type: enum
+        values: [cards, plain]
+        description: ペイウォールの見た目の版
+
+events:
+  - name: entry_saved
+    kind: outcome
+    dedup: always
+    description: 日記を保存した
+    parameters:
+      screen:
+        type: enum
+        type_name: ScreenName
+        description: どの画面から保存したか（共通の ScreenName の値を使う）
+      words:
+        type: bucket
+        edges: [1, 50, 200]

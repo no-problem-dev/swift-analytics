@@ -6,15 +6,18 @@
 分からなくなり、エンジニア以外は計測の話に参加できなくなる。
 
 ```sh
-Scripts/analytics-gen.py generate --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json]
-Scripts/analytics-gen.py check    --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json]
+Scripts/analytics-gen.py generate --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json] [--ts catalog.ts]
+Scripts/analytics-gen.py check    --schema analytics.yaml --out Generated/AppAnalytics.swift [--json catalog.json] [--ts catalog.ts]
 Scripts/analytics-gen.py audit    --schema analytics.yaml --sources Sources/
 ```
 
 - `generate` … Swift を書き出す。`--json` を付けると、受け口（サーバー）が照らし合わせに使う JSON も書き出す
-  （下の「--json の形」）。`--out` と `--json` はどちらか一方だけでもよい。**人の手元で走らせ、生成物をコミットする**
+  （下の「--json の形」）。`--ts` は受け口（Worker・studio）が import する TypeScript（下の「--ts の形」）。
+  `--out`・`--json`・`--ts` はどれか 1 つだけでもよい。**人の手元で走らせ、生成物をコミットする**
 - `check` … 生成物（渡した方の全部）がスキーマとずれていたら落ちる。CI に置く
 - `audit` … カタログにあるのに撃たれていない／同じ発火が 2 箇所にある、を落とす。CI に置く
+- 3 つとも `--common <path>` で `include: common` の読み先を替えられる（省くとこのパッケージの
+  `Schema/common/common.yaml`。SwiftPM の checkout の中の生成器を使えば、そのバージョンの共通カタログが読まれる）
 
 ---
 
@@ -22,17 +25,21 @@ Scripts/analytics-gen.py audit    --schema analytics.yaml --sources Sources/
 
 ```yaml
 version: 1            # カタログの版。受け口と食い違いうる変更をしたら上げる（--json の catalogVersion）
-dialect: ga4          # 送信先の方言（ga4 | first_party）。名前と値の制約を生成時に検査する
+dialect: ga4          # 送信先の方言（ga4 | first_party | envelope）。名前と値の制約を生成時に検査する
+include: common       # 任意。共通カタログを取り込む（dialect: envelope のときだけ。下の「include と extend」）
 swift:
   event_type: StockEvent           # 生成する enum の名前
   property_type: StockUserProperty
   module: StockAnalytics           # 生成物を置くモジュール名（doc コメントに出るだけ）
   swiftui: true                    # trackScreen / trackImpression の型付き口も生成する
 
+extend: [...]         # 任意。共通の出来事に enum の値と引数を足す
 events: [...]
 user_properties: [...]
 facts: [...]          # 任意。サーバーから数えるもの。**Swift は生成されない**
 ```
+
+頭に書ける鍵はこの 9 つ（と `name`）だけ。ほかの鍵は打ち間違いとして落とす。
 
 ## events
 
@@ -91,6 +98,79 @@ analytics.track(.blockSeen(renderId: renderID, blockKey: key, position: index + 
 （`place_name`・`first_text` は落ち、`placement` は通る）。方言によらない。
 **人を指す値や、人が書いた文を引数に載せる入口を名前の段階で塞ぐ**ため。
 
+## include と extend
+
+どのアプリにもある出来事（入口・ペイウォール・評価・お知らせ）は、このパッケージの
+[common/common.yaml](common/common.yaml) が持つ。アプリのカタログは `include: common` で取り込み、
+**名前と共通の引数を手で写さない**。名前を変えたら、共通カタログの差分と受け口の生成物の差分で分かる。
+
+```yaml
+version: 3
+dialect: envelope
+include: common
+
+extend:
+  - name: screen_viewed
+    parameters:
+      screen:
+        values: [home, entry]        # extensible: true の enum に値を足す
+  - name: paywall_shown
+    parameters:
+      variant:                       # 共通の出来事に引数を足す（後ろに付く）
+        type: enum
+        values: [cards, plain]
+
+events:
+  - name: entry_saved                # アプリ固有の出来事
+    kind: outcome
+    dedup: always
+    parameters:
+      screen: { type: enum, type_name: ScreenName }   # 共通の enum を型名だけで使う（足した値も入る）
+```
+
+例は [example-common.yaml](example-common.yaml)（生成物は `example-common.catalog.json`・`example-common.catalog.ts`・
+`Tests/AnalyticsBatchSinkTests/Generated/JournalAnalytics.swift`）。
+
+| 決まり | 破ったら |
+|---|---|
+| `include` は `dialect: envelope` のカタログでだけ使える。共通の出来事は固定の封筒で送る前提で、ga4 の予約名（`first_open`）にも first_party の列の数にも収まらない | 落ちる |
+| 共通の出来事を `events:` に書き直さない。値や引数は `extend:` で足す | 落ちる |
+| `extend:` に書けるのは共通カタログにある出来事だけ | 落ちる |
+| 共通の引数に書けるのは `values` だけ（`type`・`type_name`・`edges`・`pattern` などは変えられない） | 落ちる |
+| 値を足せるのは `extensible: true` の enum だけ。共通の値をもう一度書くこと、同じ値を 2 回足すことはできない | 落ちる |
+| 共通の値・引数を消す書き方は無い | — |
+
+- **値は型（`type_name`）ごとに足す。** `ScreenName` は `screen_viewed` と `tapped` の両方が使うので、
+  `screen_viewed` に足した `home` は `tapped.screen` にも入る（同じ型名で値の違う状態を作らない）
+- アプリの出来事の enum が、共通の型名を `values` なしで書いたら、その値（足した値を含む）を使う
+- 生成される Swift は 1 つの型（`swift.event_type`）に、共通の出来事とアプリの出来事が並ぶ
+
+### extensible
+
+```yaml
+      screen:
+        type: enum
+        type_name: ScreenName
+        extensible: true             # 取り込んだアプリが値を足してよい
+        values: [onboarding, paywall, settings, whats_new]
+```
+
+`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。アプリのカタログの enum に書いてもよいが、
+`--json` と `--ts` に載るだけで生成器の動きは変わらない。
+
+### sent_by: package
+
+共通カタログの `first_open` と `internal_device` は、AnalyticsCore が自分で送る
+（`FirstLaunch.recordLaunch(sendingTo:)`・`InternalDevice.mark(sendingTo:)`）。`sent_by: package` の出来事は
+**アプリの Swift の型に出さず**、`--json` と `--ts` にだけ載る。送る口を 1 つにして、2 か所から撃てないようにする。
+`audit` もこの出来事を数えない。`sent_by` は共通カタログにだけ書ける。
+
+### audit と共通の出来事
+
+アプリにその場面が無い共通の出来事（お知らせが無いアプリの `whats_new_*` など）は、撃っていなくても落とさず、
+`（知らせ）` の行で知らせるだけ。値の確かめも、共通の enum では**アプリが足した値**だけを見る
+（`PaywallSource` の `limit` が無いアプリもある）。アプリの出来事・アプリが足した値・アプリの引数は、今までどおり全部を確かめる。
+
 ## user_properties
 
 ```yaml
@@ -110,6 +190,14 @@ user_properties:
 
 サーバーの正典から数えるもの。**クライアントから送らない**ので Swift は出ないが、
 「何を測ることにしたか」を 1 か所に集めるためにここへ書く。
+
+**`fact` にするのは、サーバーにしか無い事実だけ。** 世帯を作った・通知を送った、のように、サーバーの記録が正本で、
+クライアントから送ると必ず食い違うもの。
+
+**`purchase_completed` は `fact` ではない。** 共通カタログの `purchase_completed` は「この壁で買った」という
+**画面の上の結果**で、クライアントから送ってよい。ペイウォールの `source`・`pw_id` ごとの転換を出すのに要り、
+サーバーの購入の記録には「どの壁から買ったか」が無い。**売上と継続の正本は RevenueCat** に置き、
+数字はそこから読む。`purchase_completed` の数を売上として数えない。
 
 ```yaml
 facts:
@@ -136,15 +224,17 @@ facts:
 
 ### 方言
 
-| | `ga4` | `first_party` |
-|---|---|---|
-| 送り先 | Firebase Analytics（`swift-analytics-firebase`） | 自前の受け口（`AnalyticsBatchSink` で溜めて送る） |
-| 名前（出来事・属性） | 40 字まで・英字で始まる英数字と `_`・予約接頭辞（`firebase_` `google_` `ga_`）と予約イベント名を落とす | 40 字まで・`snake_case`。引数の名前も同じ |
-| 引数の数 | 25 個まで | **次元（`enum`・`flag`・`bucket`）4 つ・数（`count`・`number`）1 つ・`token` 2 つ**まで |
-| 値（`enum` の値・`token` の長さ） | 100 字まで | 64 字まで |
+| | `ga4` | `first_party` | `envelope` |
+|---|---|---|---|
+| 送り先 | Firebase Analytics（`swift-analytics-firebase`） | 1 件を固定の列に書く自前の受け口 | 固定の封筒（[common/ENVELOPE.md](common/ENVELOPE.md)）を受ける自前の受け口。`AnalyticsBatchSink` が送る |
+| 名前（出来事・属性） | 40 字まで・英字で始まる英数字と `_`・予約接頭辞（`firebase_` `google_` `ga_`）と予約イベント名を落とす | 40 字まで・`snake_case`。引数の名前も同じ | `first_party` と同じ |
+| 引数の数 | 25 個まで | **次元（`enum`・`flag`・`bucket`）4 つ・数（`count`・`number`）1 つ・`token` 2 つ**まで | 上限なし（`props` は 1 段の JSON のマップ） |
+| 値（`enum` の値・`token` の長さ） | 100 字まで | 64 字まで | 64 字まで |
+| `include: common` | 使えない | 使えない | 使える |
 
 `first_party` の引数の数は、受け口が 1 件を固定の列（名前・種別・次元 4・token 2・数 1）に書くことから来る。
-受け口は、次元を**カタログに書いた順に** 1〜4 番目の列へ置く。
+受け口は、次元を**カタログに書いた順に** 1〜4 番目の列へ置く。`envelope` の受け口は `props` を JSON のまま持つので、
+列の数の上限が無い。**新しく作るカタログは `envelope` にする。**
 
 `audit` は実装側を見る。
 
@@ -195,8 +285,11 @@ facts:
 | `format` | この JSON の形の版。形を変えたら上げる（今は 1） |
 | `catalogVersion` | YAML の `version`。アプリは束の頭でこの値を送り、受け口は自分の知る版と比べられる |
 | `dialect` | YAML の `dialect` |
-| `limits` | 方言の上限。`first_party` は `value`・`name`・`dimensions`・`numbers`・`tokens`、`ga4` は `value`・`name`・`parameters` |
-| `events[].parameters` | **YAML に書いた順**（列の割り当てはこの順）。`key` と `type` は必ずある |
+| `limits` | 方言の上限。`first_party` は `value`・`name`・`dimensions`・`numbers`・`tokens`、`envelope` は `value`・`name`、`ga4` は `value`・`name`・`parameters` |
+| `includes` | 取り込んだカタログの `name` と `version` の並び。取り込んでいなければ `[]` |
+| `events[].origin` | `common`（共通カタログの出来事）か `app`（アプリの出来事） |
+| `events[].sentBy` | `package`（AnalyticsCore が送る）か `app` |
+| `events[].parameters` | **YAML に書いた順**（列の割り当てはこの順）。`key`・`origin`・`type` は必ずある。`extend:` で足した引数は `origin: app` で後ろに付く |
 | `userProperties` | 属性。`token` は無い |
 | `facts` | サーバーで数えるもの。照らし合わせには使わない |
 
@@ -204,18 +297,56 @@ facts:
 
 | `type` | 鍵 | 通してよい値（JSON） |
 |---|---|---|
-| `enum` | `values` | `values` のどれかの文字列 |
+| `enum` | `values`・`extensible`（引数のときだけ）・`appValues`（共通の引数のときだけ。アプリが足した値） | `values` のどれかの文字列 |
 | `bucket` | `edges`（昇順）・`values` | `values` のどれかの文字列（`AnalyticsValue.bucket(_:edges:)` が返しうる帯の名前の全部） |
 | `token` | `pattern`・`maxLength` | 文字列で、長さが `maxLength` 以下、**全体が** `pattern` に合う |
 | `flag` | — | `true` か `false` |
 | `count` | — | 整数 |
 | `number` | — | 有限の数 |
 
-`AnalyticsBatchSink` の既定の形（`BatchFormat.standard`）では、束はこう届く。頭の項目はアプリが
-`header` に渡したものと属性で、パッケージは中身を決めない。
+`AnalyticsBatchSink` が送る束の形は [common/ENVELOPE.md](common/ENVELOPE.md) の 1 つだけ。
+出来事の引数は `events[].props` に、`--json` の `key` をそのまま鍵にして載る。
 
 ```json
-{ "v": 1, "catalog": 1, "install": "ins_…", "plan": "free",
-  "events": [ { "id": "…", "name": "block_seen", "at": 1790000000.0,
-                "params": { "render_id": "r_01J9ABCD", "position": "3_4" } } ] }
+{ "schema_version": 1, "app": "kotoakari", "install_id": "8c1f…", "app_version": "1.2.0", "build": "45",
+  "channel": "appstore", "lang": "ja", "region": "JP", "sent_at": 1790000000000,
+  "events": [ { "id": "…", "name": "block_seen", "occurred_at": 1789999990000,
+                "props": { "render_id": "r_01J9ABCD", "position": "3_4" } } ] }
 ```
+
+## --ts の形
+
+`generate --ts` は、受け口（Cloudflare Worker・studio）が import する TypeScript を書き出す。中身は `--json` と同じで、
+型として使える形にしてある。例は [example-common.catalog.ts](example-common.catalog.ts)。共通カタログだけのものは
+[common/common.catalog.ts](common/common.catalog.ts)（と `common.catalog.json`）。
+
+```ts
+export const CATALOG_VERSION = 3 as const;
+export const INCLUDES = [{ name: "common", version: 1 }] as const;
+
+export const PaywallSource = ["onboarding", "settings", "limit", "entry_limit"] as const;   // enum の値
+export type PaywallSource = (typeof PaywallSource)[number];
+
+export const EVENTS = {
+  paywall_shown: {
+    kind: "impression", dedup: "always", origin: "common", sentBy: "app",
+    parameters: {
+      source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
+      pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 8 },
+      ...
+    },
+  },
+} as const;
+
+export type EventName = keyof typeof EVENTS;
+export const EVENT_NAMES: EventName[];
+export const COMMON_EVENT_NAMES = [...] as const;          // origin が common の出来事
+export interface EventProps {                               // 出来事ごとの props の型
+  paywall_shown: { source: PaywallSource; pw_id: string; nth: "0" | "1_1" | ...; variant: Variant };
+}
+```
+
+- enum の型名（`type_name`、無ければ鍵から作る名前）が、値の `const` と型の名前になる
+- `bucket` は帯の名前の和、`token` は `string`、`count`・`number` は `number`、`flag` は `boolean`
+- 引数の無い出来事は `Record<string, never>`
+- enum の型名が `EVENTS`・`EventName`・`EventProps` などの出力の名前と重なると、書き出す前に落ちる

@@ -1,0 +1,732 @@
+{
+  "format": 1,
+  "generator": "swift-analytics/Scripts/analytics-gen.py",
+  "catalogVersion": 1,
+  "dialect": "envelope",
+  "limits": {
+    "value": 64,
+    "name": 40
+  },
+  "includes": [],
+  "events": [
+    {
+      "name": "first_open",
+      "kind": "outcome",
+      "dedup": "install",
+      "origin": "common",
+      "sentBy": "package",
+      "parameters": [
+        {
+          "key": "kind",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "fresh",
+            "upgraded"
+          ],
+          "extensible": false,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "internal_device",
+      "kind": "outcome",
+      "dedup": "install",
+      "origin": "common",
+      "sentBy": "package",
+      "parameters": []
+    },
+    {
+      "name": "screen_viewed",
+      "kind": "screen",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "screen",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "paywall",
+            "settings",
+            "whats_new"
+          ],
+          "extensible": true,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "tapped",
+      "kind": "interaction",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "target",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "close",
+            "continue",
+            "purchase",
+            "restore",
+            "review",
+            "share"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "screen",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "paywall",
+            "settings",
+            "whats_new"
+          ],
+          "extensible": true,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "onboarding_step",
+      "kind": "screen",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "step",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "paywall"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "index",
+          "origin": "common",
+          "type": "count"
+        }
+      ]
+    },
+    {
+      "name": "onboarding_completed",
+      "kind": "outcome",
+      "dedup": "install",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": []
+    },
+    {
+      "name": "signed_in",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "provider",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "apple",
+            "google",
+            "anonymous",
+            "email"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "gate"
+          ],
+          "extensible": true,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "experiment_assigned",
+      "kind": "outcome",
+      "dedup": "install",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "experiment",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-z0-9_]{1,40}",
+          "maxLength": 64
+        },
+        {
+          "key": "arm",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-z0-9_]{1,40}",
+          "maxLength": 64
+        }
+      ]
+    },
+    {
+      "name": "paywall_shown",
+      "kind": "impression",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "nth",
+          "origin": "common",
+          "type": "bucket",
+          "edges": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "values": [
+            "0",
+            "1_1",
+            "2_2",
+            "3_3",
+            "4_4",
+            "5_5",
+            "6_6",
+            "7_7",
+            "8_8",
+            "9_9",
+            "10_10",
+            "11_plus"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "paywall_loaded",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "result",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "ok",
+            "unavailable"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "load_s",
+          "origin": "common",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "name": "paywall_scrolled",
+      "kind": "impression",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "section",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "benefits",
+            "plans",
+            "comparison"
+          ],
+          "extensible": true,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "paywall_plan_selected",
+      "kind": "interaction",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "to",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "yearly",
+            "monthly",
+            "weekly",
+            "lifetime"
+          ],
+          "extensible": false,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "paywall_purchase_tapped",
+      "kind": "interaction",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "product",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "yearly",
+            "monthly",
+            "weekly",
+            "lifetime"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "open_s",
+          "origin": "common",
+          "type": "count"
+        }
+      ]
+    },
+    {
+      "name": "paywall_purchase_result",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "product",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "yearly",
+            "monthly",
+            "weekly",
+            "lifetime"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "result",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "purchased",
+            "cancelled",
+            "pending",
+            "failed"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "sheet_s",
+          "origin": "common",
+          "type": "count"
+        }
+      ]
+    },
+    {
+      "name": "paywall_backgrounded",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "open_s",
+          "origin": "common",
+          "type": "count"
+        }
+      ]
+    },
+    {
+      "name": "paywall_closed",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "result",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "purchased",
+            "restored",
+            "dismissed"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "via",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "close_button",
+            "later",
+            "continue_free",
+            "auto",
+            "swipe_down"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "product",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "yearly",
+            "monthly",
+            "weekly",
+            "lifetime"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "open_s",
+          "origin": "common",
+          "type": "count"
+        }
+      ]
+    },
+    {
+      "name": "purchase_completed",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "onboarding",
+            "settings",
+            "limit"
+          ],
+          "extensible": true,
+          "appValues": []
+        },
+        {
+          "key": "pw_id",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[a-f0-9]{8}",
+          "maxLength": 64
+        },
+        {
+          "key": "product",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "yearly",
+            "monthly",
+            "weekly",
+            "lifetime"
+          ],
+          "extensible": false,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "restore_completed",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "source",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "paywall",
+            "settings"
+          ],
+          "extensible": false,
+          "appValues": []
+        },
+        {
+          "key": "result",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "restored",
+            "nothing_to_restore",
+            "failed"
+          ],
+          "extensible": false,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "review_requested",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "moment",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "after_whats_new"
+          ],
+          "extensible": true,
+          "appValues": []
+        }
+      ]
+    },
+    {
+      "name": "whats_new_shown",
+      "kind": "impression",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "release",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[0-9]{1,3}(\\.[0-9]{1,3}){1,2}",
+          "maxLength": 64
+        }
+      ]
+    },
+    {
+      "name": "whats_new_closed",
+      "kind": "outcome",
+      "dedup": "always",
+      "origin": "common",
+      "sentBy": "app",
+      "parameters": [
+        {
+          "key": "release",
+          "origin": "common",
+          "type": "token",
+          "pattern": "[0-9]{1,3}(\\.[0-9]{1,3}){1,2}",
+          "maxLength": 64
+        },
+        {
+          "key": "page",
+          "origin": "common",
+          "type": "count"
+        },
+        {
+          "key": "pages",
+          "origin": "common",
+          "type": "count"
+        },
+        {
+          "key": "via",
+          "origin": "common",
+          "type": "enum",
+          "values": [
+            "close_button",
+            "finished",
+            "swipe_down"
+          ],
+          "extensible": false,
+          "appValues": []
+        }
+      ]
+    }
+  ],
+  "userProperties": [],
+  "facts": []
+}
