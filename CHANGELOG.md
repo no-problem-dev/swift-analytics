@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `analytics-gen.py audit` no longer reports enum values as unfired when the app builds them away
+  from the event expression. It now also counts:
+  - values written with the type name (`static let area = AppEvent.Area.invite`), a typed variable's
+    initial value and later assignments (`var result: AppEvent.AnswerResult = .cancelled` /
+    `result = .completed` / `visit.reader = .serverAi`), and values inside `extension AppEvent.T { … }`
+  - values passed to a function or closure that takes the type (`noteEntry(.notification)`), and
+    values passed under the label of a parameter or stored property of the type
+    (`PaywallView(source: .receiptLimit)`)
+  - values returned from a function whose return type is `T?` or a tuple holding `T`
+- A value after `guard case let … else { return T.none }` in a mapping function is no longer cut off.
+  The switch-label stripping stopped at the next colon and swallowed the rest of the body
+- A type built from a raw value (`T(rawValue: code) ?? .other`) is no longer checked value by value:
+  the value comes from a string the audit cannot see, so any value can be sent
+- A View modifier with the same name as an event (`func errorShown(_ area:…) -> some View`) is no
+  longer taken for the event itself. Calls to it do not count as firing the event; the values passed
+  to it still count
+- Bare type names are counted only when the app has `typealias T = AppEvent.T`, so an app type with
+  the same name as a generated one (`Domain.DueChoice`) does not count as sending the event's values
+
+Because the new places make more types checkable, `audit` can now report a value that was never sent
+but had gone unchecked before (stock-radar's `HouseholdSide.inviter`).
+
 ## [0.3.3] - 2026-11-08
 
 ### Fixed
