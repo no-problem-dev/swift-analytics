@@ -102,10 +102,7 @@ HomeView().trackScreen(.screenViewed(screen: .home))
 
 ## Documentation
 
-[**API reference and guides**](https://no-problem-dev.github.io/swift-analytics/documentation/) —
-including [Getting Started](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/gettingstarted/),
-[Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/),
-and [What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/).
+The API reference and the guides (Getting Started, Counting Rules, What Not to Send) are the DocC catalogs under `Sources/*/*.docc/`. Open them in Xcode with Product › Build Documentation.
 
 The catalog file format — including `include` / `extend`, the dialects, the `token` parameter type,
 and the shape of the `--json` and `--ts` output — is specified, in Japanese, in

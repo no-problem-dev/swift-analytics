@@ -97,10 +97,7 @@ HomeView().trackScreen(.screenViewed(screen: .home))
 
 ## ドキュメント
 
-[**API リファレンスとガイド**](https://no-problem-dev.github.io/swift-analytics/documentation/) —
-[Getting Started](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/gettingstarted/)、
-[Counting Rules](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/countingrules/)、
-[What Not to Send](https://no-problem-dev.github.io/swift-analytics/documentation/analyticscore/whatnottosend/) を含みます。
+API リファレンスとガイド（Getting Started・Counting Rules・What Not to Send）は `Sources/*/*.docc/` の DocC にあります。Xcode の Product › Build Documentation で開けます。
 
 カタログの書式（`include` と `extend`・方言・`token` 型・`--json` と `--ts` の形を含む）は [Schema/SCHEMA.md](./Schema/SCHEMA.md) が仕様です。
 封筒は [Schema/common/ENVELOPE.md](./Schema/common/ENVELOPE.md) です。

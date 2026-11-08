@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
 One shared catalog and one envelope for every app. **Contains breaking changes** (see Removed and
 Changed); 0.x minors break, so move from `.upToNextMinor(from: "0.2.0")` deliberately, following
 "Migrating from 0.2" below.
