@@ -985,5 +985,80 @@ class ExtensibleCommonEnums(unittest.TestCase):
         self.assertIn("quarterly", next(p for p in purchase.parameters if p.key == "product").values)
 
 
+class ExtendByCommonTypeName(unittest.TestCase):
+    """`extend:` で足す引数が共通の enum を型の名前だけで使う。"""
+
+    def plan(self, spec: str):
+        schema = app("""\
+            extend:
+              - name: paywall_plan_selected
+                parameters:
+                  to:
+                    values: [quarterly]
+                  from:
+                    type: enum
+                    type_name: PlanPeriod
+        """.rstrip(" ") + spec)
+        event = next(e for e in schema.events if e.name == "paywall_plan_selected")
+        return schema, next(p for p in event.parameters if p.key == "from")
+
+    def test_type_name_alone_takes_the_values_and_extensible(self):
+        schema, parameter = self.plan("")
+        self.assertEqual(parameter.values, ["yearly", "monthly", "weekly", "lifetime", "quarterly"])
+        self.assertTrue(parameter.extensible)
+        self.assertEqual(gen.render(schema).count("public enum PlanPeriod"), 1)
+
+    def test_copied_values_still_pass(self):
+        _, parameter = self.plan("""\
+                    extensible: true
+                    values: [yearly, monthly, weekly, lifetime, quarterly]
+        """)
+        self.assertTrue(parameter.extensible)
+
+
+class AuditMappingSwitch(unittest.TestCase):
+    """アプリの値から計測の値へ写す switch が返す値を、撃っている値として数える。"""
+
+    def schema(self):
+        return app("""\
+            extend:
+              - name: screen_viewed
+                parameters:
+                  screen:
+                    values: [room, diary, about]
+        """)
+
+    def test_values_returned_by_a_mapping_switch_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, """
+                view.trackScreen(AppEvent.screenViewed(screen: .about))
+                view.trackScreen(AppEvent.screenViewed(screen: tab.analyticsScreen))
+                extension Tab {
+                    var analyticsScreen: AppEvent.ScreenName {
+                        switch self {
+                        case .home: .room
+                        case .log(let day): .diary
+                        }
+                    }
+                }
+            """)
+            self.assertEqual(gen.audit(self.schema(), roots), [])
+
+    def test_case_patterns_and_other_types_do_not_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, """
+                view.trackScreen(.screenViewed(screen: .about))
+                func screen(for tab: Tab) -> ScreenName {
+                    switch tab {
+                    case .diary: return .room
+                    default: return .about
+                    }
+                }
+                var other: OtherKind { switch self { case .x: .diary } }
+            """)
+            problems = gen.audit(self.schema(), roots)
+        self.assertEqual(problems, ["ScreenName.diary を撃っている場所が無い（screen_viewed.screen・tapped.screen のどれからも）"])
+
+
 if __name__ == "__main__":
     unittest.main()

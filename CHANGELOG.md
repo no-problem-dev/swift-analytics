@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Generator: a parameter added to a common event through `extend:` can use a common enum by its
+  type name alone (`from: { type: enum, type_name: PlanPeriod }`). It takes the common values
+  (including the ones the app added) and `extensible`. Copying the values and `extensible: true`
+  still works and generates the same output
+- `audit`: values returned by a function or computed property whose type is the enum
+  (`var analyticsScreen: AppEvent.ScreenName { switch self { case .room: .room } }`, `-> ScreenName {`)
+  now count as fired. Only the right side of each `case` and `return` are read, not the patterns
+
 ## [0.3.1] - 2026-11-08
 
 Fixes asked for by the apps that started on 0.3.0 (kotoakari, stock-radar, jibun-bgm, kokoiine,
