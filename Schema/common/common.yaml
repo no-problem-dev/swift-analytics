@@ -1,0 +1,279 @@
+# 共通カタログ（common）。どのアプリにもある入口・ペイウォール・評価・お知らせの出来事。
+# アプリのカタログは `include: common` でこれを取り込み、`extend:` で enum の値と引数を足す。
+# 名前・引数・値を変えるときは、受ける側（集計の SQL）も同じ変更で直す。catalogVersion を上げる。
+#
+# 決まり:
+# - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）
+# - 引数はアプリが足してよい（共通の引数は消せない・型は変えられない）
+# - 時刻・人・アプリの版などは封筒（Envelope）が持つ。出来事の引数に入れない
+
+version: 1
+name: common
+
+events:
+  # ---- 入口 ----
+  - name: first_open
+    kind: outcome
+    dedup: install
+    description: このインストールで初めて起動した。継続率と集団の起点
+    trigger: 起動の最初（FirstLaunch が判定）
+    parameters:
+      kind:
+        type: enum
+        type_name: FirstOpenKind
+        values: [fresh, upgraded]
+        description: fresh = 新しく入れた・upgraded = 前の版から更新して初めて今の計測で起動した
+
+  - name: internal_device
+    kind: outcome
+    dedup: install
+    description: 作り手の端末。集計から外す
+    trigger: 隠しスイッチを入れたとき
+
+  - name: screen_viewed
+    kind: screen
+    dedup: always
+    description: 画面が表示された
+    trigger: trackScreen
+    parameters:
+      screen:
+        type: enum
+        type_name: ScreenName
+        extensible: true
+        values: [onboarding, paywall, settings, whats_new]
+
+  - name: tapped
+    kind: interaction
+    dedup: always
+    description: 計測すると決めたボタンを押した
+    trigger: 押した瞬間
+    parameters:
+      target:
+        type: enum
+        type_name: TapTarget
+        extensible: true
+        values: [close, continue, purchase, restore, review, share]
+      screen:
+        type: enum
+        type_name: ScreenName
+        extensible: true
+        values: [onboarding, paywall, settings, whats_new]
+
+  - name: onboarding_step
+    kind: screen
+    dedup: always
+    description: オンボーディングのステップに来た
+    trigger: 各ステップの画面
+    parameters:
+      step:
+        type: enum
+        type_name: OnboardingStep
+        extensible: true
+        values: [paywall]
+      index:
+        type: count
+        description: 何番目のステップか（1から）
+
+  - name: onboarding_completed
+    kind: outcome
+    dedup: install
+    description: オンボーディングを最後まで通った
+    trigger: 最後のステップを抜けたとき
+
+  - name: signed_in
+    kind: outcome
+    dedup: always
+    description: サインインが成立した
+    parameters:
+      provider:
+        type: enum
+        type_name: SignInProvider
+        values: [apple, google, anonymous, email]
+      source:
+        type: enum
+        type_name: SignInSource
+        extensible: true
+        values: [onboarding, settings, gate]
+
+  - name: experiment_assigned
+    kind: outcome
+    dedup: install
+    description: 実験の群に入った
+    parameters:
+      experiment:
+        type: token
+        pattern: "[a-z0-9_]{1,40}"
+      arm:
+        type: token
+        pattern: "[a-z0-9_]{1,40}"
+
+  # ---- ペイウォール（1回の表示を pw_id で束ねる） ----
+  - name: paywall_shown
+    kind: impression
+    dedup: always
+    description: ペイウォールが描かれた
+    parameters:
+      source:
+        type: enum
+        type_name: PaywallSource
+        extensible: true
+        values: [onboarding, settings, limit]
+        description: どの入口から開いたか
+      pw_id:
+        type: token
+        pattern: "[a-f0-9]{8}"
+        description: 1回の表示ごとの短い ID。閉じるまで同じ
+      nth:
+        type: bucket
+        edges: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        description: このインストールで何回目の表示か
+
+  - name: paywall_loaded
+    kind: outcome
+    dedup: always
+    description: 価格を読み終えた
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      result:
+        type: enum
+        type_name: PaywallLoadResult
+        values: [ok, unavailable]
+      load_s:
+        type: number
+        description: 読み始めてから読み終えるまでの秒
+
+  - name: paywall_scrolled
+    kind: impression
+    dedup: always
+    description: ペイウォールの区切りが初めて画面に入った（1回の表示につき区切りごとに1回）
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      section:
+        type: enum
+        type_name: PaywallSection
+        extensible: true
+        values: [benefits, plans, comparison]
+
+  - name: paywall_plan_selected
+    kind: interaction
+    dedup: always
+    description: プランを切り替えた
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      to:
+        type: enum
+        type_name: PlanPeriod
+        values: [yearly, monthly, weekly, lifetime]
+
+  - name: paywall_purchase_tapped
+    kind: interaction
+    dedup: always
+    description: 購入ボタンを押した
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      open_s: { type: count, description: 開いてから押すまでの秒 }
+
+  - name: paywall_purchase_result
+    kind: outcome
+    dedup: always
+    description: 購入の結果が返った
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      result:
+        type: enum
+        type_name: PurchaseResult
+        values: [purchased, cancelled, pending, failed]
+      sheet_s: { type: count, description: 押してから結果が返るまでの秒 }
+
+  - name: paywall_backgrounded
+    kind: outcome
+    dedup: always
+    description: ペイウォールを出したままアプリが裏に回った
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      open_s: { type: count }
+
+  - name: paywall_closed
+    kind: outcome
+    dedup: always
+    description: ペイウォールを閉じた
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      result:
+        type: enum
+        type_name: PaywallCloseResult
+        values: [purchased, restored, dismissed]
+      via:
+        type: enum
+        type_name: PaywallCloseVia
+        values: [close_button, later, continue_free, auto, swipe_down]
+      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      open_s: { type: count }
+
+  - name: purchase_completed
+    kind: outcome
+    dedup: always
+    description: 画面の上で購入が成立した（壁ごとの転換に使う。売上と継続の正本は RevenueCat）
+    parameters:
+      source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
+      pw_id: { type: token, pattern: "[a-f0-9]{8}" }
+      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+
+  - name: restore_completed
+    kind: outcome
+    dedup: always
+    description: 復元の結果が返った
+    parameters:
+      source:
+        type: enum
+        type_name: RestoreSource
+        values: [paywall, settings]
+      result:
+        type: enum
+        type_name: RestoreResult
+        values: [restored, nothing_to_restore, failed]
+
+  # ---- 評価とお知らせ ----
+  - name: review_requested
+    kind: outcome
+    dedup: always
+    description: OS の評価の画面を呼んだ（出たかはアプリから分からない。呼んだら1回と数える）
+    trigger: swift-review が頼むと決めたとき
+    parameters:
+      moment:
+        type: enum
+        type_name: ReviewMomentName
+        extensible: true
+        values: [after_whats_new]
+
+  - name: whats_new_shown
+    kind: impression
+    dedup: always
+    description: 新しいバージョンのお知らせを出した
+    parameters:
+      release:
+        type: token
+        pattern: "[0-9]{1,3}(\\.[0-9]{1,3}){1,2}"
+        description: お知らせのバージョン
+
+  - name: whats_new_closed
+    kind: outcome
+    dedup: always
+    description: お知らせを閉じた
+    parameters:
+      release: { type: token, pattern: "[0-9]{1,3}(\\.[0-9]{1,3}){1,2}" }
+      page: { type: count, description: 閉じたときに見ていた枚（1から） }
+      pages: { type: count, description: 枚の数 }
+      via:
+        type: enum
+        type_name: WhatsNewCloseVia
+        values: [close_button, finished, swipe_down]
