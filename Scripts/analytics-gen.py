@@ -635,15 +635,16 @@ def _apply_extend(items, included: list[Event]) -> None:
 
 
 def _inherit_shared_enums(events: list[Event]) -> None:
-    """アプリの出来事が共通の enum の型名を `values` なしで書いたら、その値（足した値を含む）を使う。"""
+    """アプリの出来事か `extend:` で足した引数が、共通の enum の型名を `values` なしで書いたら、その値（足した値を含む）と extensible を使う。"""
     shared = {
         p.swift_type_name: p for e in events if e.origin != "app" for p in e.parameters
         if p.type == "enum" and p.origin != "app"
     }
     for event in events:
-        if event.origin != "app":
-            continue
         for parameter in event.parameters:
+            # アプリの出来事の引数と、`extend:` で共通の出来事に足した引数（origin が app）
+            if event.origin != "app" and parameter.origin != "app":
+                continue
             source = shared.get(parameter.type_name)
             if parameter.type == "enum" and source and not parameter.values:
                 parameter.values = list(source.values)
@@ -1475,7 +1476,9 @@ def _audit_enum_values(schema: Schema, files: list[tuple[Path, str]]) -> list[st
       （共通の値は、アプリにその入口が無いことがある。`PaywallSource` の `limit` が無いアプリもある）
     - **確かめる値が 1 つも直書きされていない型は見ない。** 値を変数で渡している（計算している）ので、静的には確かめられない。
       共通の値（`.onboarding`）の直書きは、アプリが足した値を直書きする理由にならないので数えない
-    - 値はその出来事を作る式（`.paywallShown(…)` の括弧の中）だけで探す。ほかの出来事や属性に同じ名前の値があっても数えない
+    - 値はその出来事を作る式（`.paywallShown(…)` の括弧の中）と、その型を返す関数・計算プロパティ
+      （`var analyticsScreen: ScreenName { switch self { case .room: .room … } }`）が返す値で探す。
+      ほかの出来事や属性に同じ名前の値があっても数えない
     """
     common_types = {
         p.swift_type_name for e in schema.events if e.origin != "app" for p in e.parameters
@@ -1506,7 +1509,7 @@ def _audit_enum_values(schema: Schema, files: list[tuple[Path, str]]) -> list[st
             continue
         cases = {e.case for e in schema.app_fired_events
                  if any(p.type == "enum" and p.swift_type_name == name for p in e.parameters)}
-        own = "\n".join(_constructions(files, cases))
+        own = "\n".join(_constructions(files, cases) + _mapping_results(files, name))
         literal = [v for v in values if re.search(rf"\.{lower_camel(v)}\b", own)]
         if not literal:
             continue
@@ -1584,6 +1587,25 @@ def _constructions(files: list[tuple[Path, str]], cases: set[str]) -> list[str]:
     return bodies
 
 
+def _mapping_results(files: list[tuple[Path, str]], type_name: str) -> list[str]:
+    """`type_name` を返す関数・計算プロパティ（`-> ScreenName {`・`var x: TsumofuEvent.ScreenName {`）が返す値。
+
+    アプリの値から写す switch の、各 case の右側（と `return`）だけを残す。`case .room:` の側はアプリの型の値で、
+    計測の値ではないので数えない。
+    """
+    pattern = re.compile(rf"(?:->|\bvar\s+\w+\s*:)\s*(?:[\w.]+\.)?{re.escape(type_name)}\s*\{{")
+    results: list[str] = []
+    for _, text in files:
+        text = _strip_line_comments(text)
+        for match in pattern.finditer(text):
+            body = _balanced(text, match.end() - 1, "{", "}")
+            if body is None:
+                continue
+            body = re.sub(r"\b(?:case\b[^:]*|default\s*):", " ", body)
+            results.append(re.sub(r"\s+", " ", body))
+    return results
+
+
 def _collect_sites(files: list[tuple[Path, str]]) -> list[tuple[str, str, str]]:
     sites: list[tuple[str, str, str]] = []
     for path, text in files:
@@ -1596,12 +1618,12 @@ def _collect_sites(files: list[tuple[Path, str]]) -> list[tuple[str, str, str]]:
     return sites
 
 
-def _balanced(text: str, open_index: int) -> str | None:
+def _balanced(text: str, open_index: int, open_: str = "(", close: str = ")") -> str | None:
     depth = 0
     for i in range(open_index, len(text)):
-        if text[i] == "(":
+        if text[i] == open_:
             depth += 1
-        elif text[i] == ")":
+        elif text[i] == close:
             depth -= 1
             if depth == 0:
                 return text[open_index + 1:i]

@@ -195,7 +195,7 @@ events:
 
 - **値は型（`type_name`）ごとに足す。** `ScreenName` は `screen_viewed` と `tapped` の両方が使うので、
   `screen_viewed` に足した `home` は `tapped.screen` にも入る（同じ型名で値の違う状態を作らない）
-- アプリの出来事の enum が、共通の型名を `values` なしで書いたら、その値（足した値を含む）を使う
+- アプリの出来事の enum と、`extend:` で共通の出来事に足した enum の引数が、共通の型名を `values` なしで書いたら、その値（足した値を含む）と `extensible` を使う（`from: { type: enum, type_name: PlanPeriod }`）。写して書いても通る
 - 生成される Swift は 1 つの型（`swift.event_type`）に、共通の出来事とアプリの出来事が並ぶ
 
 ### extensible
@@ -232,7 +232,8 @@ AnalyticsCore が送る `FirstOpenKind` のほかはどれも `extensible: true`
   `track(` の中でなくてよい（`send { .paywallShown(source: $0, …) }`、出来事を作って返す関数、`trackImpression(shown)`）
 - **値は型（`type_name`）ごとに数える。** `extend:` で `ScreenName` に足した `home` は、`screen_viewed`・`tapped`・
   `ScreenName` を使うアプリの出来事のどれかで直書きされていれば撃っている
-- 値を探すのは、その型を使う出来事を作る式の括弧の中だけ
+- 値を探すのは、その型を使う出来事を作る式の括弧の中と、**その型を返す関数・計算プロパティ**（`var analyticsScreen: AppEvent.ScreenName { switch self { case .room: .room … } }`・`-> ScreenName {`）の中。
+  後者では `case …:` の側（アプリの型の値）は数えず、各 case が返す値と `return` の値だけを数える
 - **確かめる値（アプリの型なら全部、共通の型ならアプリが足した値）が 1 つも直書きされていない型は見ない。**
   変数で渡している（`source: source`・`role.measured`）ので、静的には確かめられない。
   共通の値（`.onboarding`）の直書きは数えない —— アプリが足した値を全部直書きする理由にならない
