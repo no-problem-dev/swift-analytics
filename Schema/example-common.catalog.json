@@ -10,7 +10,7 @@
   "includes": [
     {
       "name": "common",
-      "version": 1
+      "version": 2
     }
   ],
   "events": [
@@ -158,9 +158,10 @@
             "apple",
             "google",
             "anonymous",
-            "email"
+            "email",
+            "other"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -620,7 +621,8 @@
             "lifetime"
           ],
           "extensible": false,
-          "appValues": []
+          "appValues": [],
+          "optional": true
         },
         {
           "key": "open_s",

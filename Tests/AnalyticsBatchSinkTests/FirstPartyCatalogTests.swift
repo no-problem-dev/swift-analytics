@@ -69,6 +69,18 @@ struct CommonCatalogTests {
         #expect(event.kind == .impression)
     }
 
+    @Test("任意の引数は省いて呼べ、nil なら props に載らない")
+    func optionalParameterIsLeftOut() throws {
+        let pwID = try #require(JournalEvent.PwId("0a1b2c3d"))
+        let dismissed = JournalEvent.paywallClosed(source: .settings, pwId: pwID, result: .dismissed, via: .closeButton, openS: 4)
+        #expect(dismissed.parameters == [
+            "source": .text("settings"), "pw_id": .text("0a1b2c3d"), "result": .text("dismissed"),
+            "via": .text("close_button"), "open_s": .count(4),
+        ])
+        let purchased = JournalEvent.paywallClosed(source: .settings, pwId: pwID, result: .purchased, via: .auto, product: .yearly, openS: 9)
+        #expect(purchased.parameters["product"] == .text("yearly"))
+    }
+
     @Test("お知らせの版の token は「1.2」「1.2.3」の形だけを通す")
     func releaseTokenFollowsItsPattern() {
         #expect(JournalEvent.Release("1.2") != nil)

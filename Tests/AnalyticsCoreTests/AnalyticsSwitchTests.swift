@@ -82,6 +82,38 @@ struct AnalyticsSwitchTests {
         #expect(recorder.events.isEmpty)
     }
 
+    @Test("同期の setEnabled(false) は戻る前に止め、消すのは返したタスクで行う")
+    func stopsSynchronously() async {
+        let recorder = RecordingAnalytics()
+        let erased = OSAllocatedUnfairLock(initialState: 0)
+        let analytics = AnalyticsSwitch(recorder, defaults: makeDefaults()) {
+            erased.withLock { $0 += 1 }
+        }
+
+        let erasure = stopFromSyncCode(analytics)
+        analytics.track(Event(name: "right_after"))
+        #expect(!analytics.isEnabled)
+        #expect(recorder.events.isEmpty)
+
+        await erasure.value
+        #expect(erased.withLock { $0 } == 1)
+    }
+
+    @Test("同期の setEnabled(true) は消さずに送りを戻す")
+    func resumesSynchronously() async {
+        let recorder = RecordingAnalytics()
+        let erased = OSAllocatedUnfairLock(initialState: 0)
+        let analytics = AnalyticsSwitch(recorder, defaults: makeDefaults(), enabledByDefault: false) {
+            erased.withLock { $0 += 1 }
+        }
+
+        await resumeFromSyncCode(analytics).value
+        analytics.track(Event(name: "app_opened"))
+
+        #expect(recorder.names == ["app_opened"])
+        #expect(erased.withLock { $0 } == 0)
+    }
+
     @Test("外側に置けば、止めている間の出来事は install の窓を使わない")
     func outsideDedupKeepsInstallWindow() async {
         let defaults = makeDefaults()
@@ -95,6 +127,15 @@ struct AnalyticsSwitchTests {
 
         #expect(recorder.count(of: "first_trip") == 1)
     }
+}
+
+/// A toggle's action: synchronous code, where only the synchronous overload is visible.
+private func stopFromSyncCode(_ analytics: AnalyticsSwitch) -> Task<Void, Never> {
+    analytics.setEnabled(false)
+}
+
+private func resumeFromSyncCode(_ analytics: AnalyticsSwitch) -> Task<Void, Never> {
+    analytics.setEnabled(true)
 }
 
 private struct Event: AnalyticsEvent {

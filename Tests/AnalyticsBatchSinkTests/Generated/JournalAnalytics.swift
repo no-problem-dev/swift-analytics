@@ -20,7 +20,7 @@ public enum JournalEvent: AnalyticsEvent {
     ///
     /// 共通カタログ（common）の出来事。名前と共通の引数はアプリで変えない。
     ///
-    /// 撃つ場所: 押した瞬間
+    /// 撃つ場所: ボタンを押したとき
     case tapped(target: TapTarget, screen: ScreenName)
 
     /// オンボーディングのステップに来た
@@ -47,7 +47,7 @@ public enum JournalEvent: AnalyticsEvent {
     /// 共通カタログ（common）の出来事。名前と共通の引数はアプリで変えない。
     case experimentAssigned(experiment: Experiment, arm: Arm)
 
-    /// ペイウォールが描かれた
+    /// ペイウォールが表示された
     ///
     /// 共通カタログ（common）の出来事。名前と共通の引数はアプリで変えない。
     case paywallShown(source: PaywallSource, pwId: PwId, nth: Int, variant: Variant)
@@ -85,9 +85,9 @@ public enum JournalEvent: AnalyticsEvent {
     /// ペイウォールを閉じた
     ///
     /// 共通カタログ（common）の出来事。名前と共通の引数はアプリで変えない。
-    case paywallClosed(source: PaywallSource, pwId: PwId, result: PaywallCloseResult, via: PaywallCloseVia, product: PlanPeriod, openS: Int)
+    case paywallClosed(source: PaywallSource, pwId: PwId, result: PaywallCloseResult, via: PaywallCloseVia, product: PlanPeriod? = nil, openS: Int)
 
-    /// 画面の上で購入が成立した（壁ごとの転換に使う。売上と継続の正本は RevenueCat）
+    /// ペイウォールの上で購入が成立した（ペイウォールごとの転換に使う。売上と継続の数字は RevenueCat から読む）
     ///
     /// 共通カタログ（common）の出来事。名前と共通の引数はアプリで変えない。
     case purchaseCompleted(source: PaywallSource, pwId: PwId, product: PlanPeriod)
@@ -142,12 +142,13 @@ public enum JournalEvent: AnalyticsEvent {
         case paywall
     }
 
-    /// `signed_in.provider` の値。
+    /// `signed_in.provider` の値。other = 上のどれでもないサインインの方法
     public enum SignInProvider: String, Sendable, CaseIterable {
         case apple
         case google
         case anonymous
         case email
+        case other
     }
 
     /// `signed_in.source` の値。
@@ -157,7 +158,7 @@ public enum JournalEvent: AnalyticsEvent {
         case gate
     }
 
-    /// `paywall_shown.source` の値。どの入口から開いたか
+    /// `paywall_shown.source` の値。どこから開いたか
     public enum PaywallSource: String, Sendable, CaseIterable {
         case onboarding
         case settings
@@ -408,7 +409,10 @@ public enum JournalEvent: AnalyticsEvent {
         case let .paywallPurchaseTapped(source, pwId, product, openS): return ["source": .text(source.rawValue), "pw_id": .text(pwId.rawValue), "product": .text(product.rawValue), "open_s": .count(openS)]
         case let .paywallPurchaseResult(source, pwId, product, result, sheetS): return ["source": .text(source.rawValue), "pw_id": .text(pwId.rawValue), "product": .text(product.rawValue), "result": .text(result.rawValue), "sheet_s": .count(sheetS)]
         case let .paywallBackgrounded(source, pwId, openS): return ["source": .text(source.rawValue), "pw_id": .text(pwId.rawValue), "open_s": .count(openS)]
-        case let .paywallClosed(source, pwId, result, via, product, openS): return ["source": .text(source.rawValue), "pw_id": .text(pwId.rawValue), "result": .text(result.rawValue), "via": .text(via.rawValue), "product": .text(product.rawValue), "open_s": .count(openS)]
+        case let .paywallClosed(source, pwId, result, via, product, openS):
+            var parameters: [String: AnalyticsValue] = ["source": .text(source.rawValue), "pw_id": .text(pwId.rawValue), "result": .text(result.rawValue), "via": .text(via.rawValue), "open_s": .count(openS)]
+            if let product { parameters["product"] = .text(product.rawValue) }
+            return parameters
         case let .purchaseCompleted(source, pwId, product): return ["source": .text(source.rawValue), "pw_id": .text(pwId.rawValue), "product": .text(product.rawValue)]
         case let .restoreCompleted(source, result): return ["source": .text(source.rawValue), "result": .text(result.rawValue)]
         case let .reviewRequested(moment): return ["moment": .text(moment.rawValue)]

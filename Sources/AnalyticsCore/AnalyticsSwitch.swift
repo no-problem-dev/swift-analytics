@@ -14,8 +14,8 @@ import os
 ///     await sink.purge()
 /// }
 ///
-/// // Settings screen
-/// await analytics.setEnabled(false)
+/// // Settings screen: the stop is immediate, the erasure follows in a task
+/// Toggle("Share usage", isOn: Binding(get: { analytics.isEnabled }, set: { analytics.setEnabled($0) }))
 /// ```
 ///
 /// ## Put it outermost
@@ -76,11 +76,32 @@ public final class AnalyticsSwitch: AnalyticsClient, Sendable {
     /// Turning it off stops occurrences first and erases second, so nothing fired while the
     /// erasure runs can slip in behind it. Returns once `onDisable` has finished.
     public func setEnabled(_ isEnabled: Bool) async {
-        enabled.withLock { $0 = isEnabled }
-        defaults.set(isEnabled, forKey: Self.defaultsKey)
+        store(isEnabled)
         if !isEnabled {
             await onDisable()
         }
+    }
+
+    /// Turns measurement on or off from synchronous code — a toggle's action — and remembers the choice.
+    ///
+    /// **The stop takes effect before this returns**, so an occurrence tracked on the next line is
+    /// already dropped. Wrapping the `async` overload in `Task { … }` instead leaves a gap: the task
+    /// has not started yet when the next occurrence arrives, and that one gets through.
+    ///
+    /// Only the erasure (`onDisable`) runs later, in the returned task; await its `value` where the
+    /// erasure has to be finished (a test, a "delete my data" screen). Turning it on returns a task
+    /// that is already done.
+    @discardableResult
+    public func setEnabled(_ isEnabled: Bool) -> Task<Void, Never> {
+        store(isEnabled)
+        guard !isEnabled else { return Task {} }
+        let onDisable = onDisable
+        return Task { await onDisable() }
+    }
+
+    private func store(_ isEnabled: Bool) {
+        enabled.withLock { $0 = isEnabled }
+        defaults.set(isEnabled, forKey: Self.defaultsKey)
     }
 
     public func track(_ event: any AnalyticsEvent) {

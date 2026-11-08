@@ -3,7 +3,7 @@
 ///
 /// The catalog marks them `sent_by: package`, and the generator leaves them out of each app's
 /// event type, so there is one way to send each: ``FirstLaunch/recordLaunch(sendingTo:hasPriorData:defaults:now:)``
-/// sends `first_open`, and ``InternalDevice/mark(sendingTo:defaults:)`` sends `internal_device`.
+/// sends `first_open`, and ``AnalyticsInternalDevice/mark(sendingTo:defaults:)`` sends `internal_device`.
 /// The names, parameters, and values here must match the catalog — the generator's tests check it.
 public enum CommonEvent: AnalyticsEvent, Equatable {
 

@@ -416,7 +416,7 @@ class IncludeCommon(unittest.TestCase):
                 kind: outcome
                 dedup: always
         """)
-        self.assertEqual(schema.includes, [("common", 1)])
+        self.assertEqual(schema.includes, [("common", 2)])
         self.assertEqual(schema.events[0].name, "first_open")
         self.assertEqual(schema.events[-1].name, "entry_saved")
         self.assertEqual(schema.events[-1].origin, "app")
@@ -569,7 +569,7 @@ class IncludeCommon(unittest.TestCase):
                     values: [home]
         """)
         document = json.loads(gen.render_json(schema))
-        self.assertEqual(document["includes"], [{"name": "common", "version": 1}])
+        self.assertEqual(document["includes"], [{"name": "common", "version": 2}])
         viewed = next(e for e in document["events"] if e["name"] == "screen_viewed")
         self.assertEqual((viewed["origin"], viewed["sentBy"]), ("common", "app"))
         screen = viewed["parameters"][0]
@@ -593,7 +593,7 @@ class TypeScriptOutput(unittest.TestCase):
         """)
         ts = gen.render_ts(schema)
         self.assertIn("export const CATALOG_VERSION = 2 as const;", ts)
-        self.assertIn('export const INCLUDES = [{ name: "common", version: 1 }] as const;', ts)
+        self.assertIn('export const INCLUDES = [{ name: "common", version: 2 }] as const;', ts)
         self.assertIn('export const PaywallSource = ["onboarding", "settings", "limit"] as const;', ts)
         self.assertIn("export type PaywallSource = (typeof PaywallSource)[number];", ts)
         self.assertIn('entry_saved: { words: "0" | "1_49" | "50_plus"; pinned: boolean };', ts)
@@ -664,8 +664,8 @@ class AuditWithCommon(unittest.TestCase):
             """), encoding="utf-8")
             problems = gen.audit(schema, [Path(directory)])
             notes = gen.unfired_common(schema, [Path(directory)])
-        # アプリが足した値（home）は撃たれていないので落ちる。共通の値（onboarding など）は問わない
-        self.assertEqual(problems, ["screen_viewed.screen = home を撃っている場所が無い"])
+        # 共通の値（settings）を直書きしても、アプリが足した値（home）を直書きする理由にはならない
+        self.assertEqual(problems, [])
         self.assertIn("paywall_shown", notes)
         self.assertNotIn("screen_viewed", notes)
         self.assertNotIn("first_open", notes)
@@ -681,6 +681,232 @@ class AuditWithCommon(unittest.TestCase):
             (Path(directory) / "Empty.swift").write_text("", encoding="utf-8")
             problems = gen.audit(schema, [Path(directory)])
         self.assertEqual(problems, ["entry_saved（.entrySaved）を撃っている場所が無い"])
+
+
+class OptionalParameters(unittest.TestCase):
+
+    def test_swift_json_and_ts(self):
+        schema = load("""\
+            dialect: envelope
+            events:
+              - name: sheet_closed
+                kind: outcome
+                dedup: always
+                parameters:
+                  via: { type: enum, values: [button, swipe] }
+                  plan: { type: enum, values: [yearly, monthly], optional: true }
+                  open_s: { type: count, optional: true }
+        """)
+        swift = gen.render(schema)
+        self.assertIn("case sheetClosed(via: Via, plan: Plan? = nil, openS: Int? = nil)", swift)
+        self.assertIn('var parameters: [String: AnalyticsValue] = ["via": .text(via.rawValue)]', swift)
+        self.assertIn('if let plan { parameters["plan"] = .text(plan.rawValue) }', swift)
+        self.assertIn('if let openS { parameters["open_s"] = .count(openS) }', swift)
+        parameters = json.loads(gen.render_json(schema))["events"][0]["parameters"]
+        self.assertNotIn("optional", parameters[0])
+        self.assertTrue(parameters[1]["optional"])
+        ts = gen.render_ts(schema)
+        self.assertIn("sheet_closed: { via: Via; plan?: Plan; open_s?: number };", ts)
+        self.assertIn('plan: { type: "enum", origin: "app", optional: true,', ts)
+
+    def test_all_optional_starts_empty(self):
+        schema = load("""\
+            dialect: envelope
+            events:
+              - name: a_done
+                kind: outcome
+                dedup: always
+                parameters:
+                  n: { type: count, optional: true }
+        """)
+        self.assertIn("var parameters: [String: AnalyticsValue] = [:]", gen.render(schema))
+
+    def test_must_be_bool(self):
+        with self.assertRaises(gen.SchemaError):
+            load("""\
+                dialect: envelope
+                events:
+                  - name: a_done
+                    kind: outcome
+                    dedup: always
+                    parameters:
+                      n: { type: count, optional: yes }
+            """)
+
+    def test_common_product_is_optional(self):
+        closed = next(e for e in gen.load(COMMON).events if e.name == "paywall_closed")
+        self.assertTrue(next(p for p in closed.parameters if p.key == "product").optional)
+
+    def test_extend_can_make_common_parameter_optional_but_not_required(self):
+        schema = app("""\
+            extend:
+              - name: paywall_closed
+                parameters:
+                  via: { optional: true }
+        """)
+        closed = next(e for e in schema.events if e.name == "paywall_closed")
+        self.assertTrue(next(p for p in closed.parameters if p.key == "via").optional)
+        with self.assertRaises(gen.SchemaError) as caught:
+            app("""\
+                extend:
+                  - name: paywall_closed
+                    parameters:
+                      product: { optional: false }
+            """)
+        self.assertIn("optional に書けるのは true だけ", str(caught.exception))
+
+
+class SwiftDescriptions(unittest.TestCase):
+
+    def test_descriptions_can_be_left_out(self):
+        body = """\
+            dialect: envelope
+            swift:
+              descriptions: {flag}
+            events:
+              - name: a_done
+                kind: outcome
+                dedup: always
+                description: 説明の文
+                trigger: 押したとき
+                parameters:
+                  via: {{ type: enum, values: [x], description: 値の説明 }}
+        """
+        self.assertIn("説明の文", gen.render(load(body.format(flag="true"))))
+        swift = gen.render(load(body.format(flag="false")))
+        for text in ("説明の文", "押したとき", "値の説明"):
+            self.assertNotIn(text, swift)
+        self.assertIn("/// `a_done.via` の値。\n", swift)
+
+
+def write_sources(directory: str, text: str, name: str = "Sites.swift") -> list[Path]:
+    (Path(directory) / name).write_text(textwrap.dedent(text), encoding="utf-8")
+    return [Path(directory)]
+
+
+class AuditAdopterCases(unittest.TestCase):
+
+    def schema(self, extra: str = ""):
+        return app("""\
+            extend:
+              - name: screen_viewed
+                parameters:
+                  screen:
+                    values: [home, shop]
+              - name: paywall_shown
+                parameters:
+                  source:
+                    values: [teaser, gate_402]
+        """ + extra)
+
+    def test_values_added_to_a_type_are_counted_per_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, """
+                view.trackScreen(.screenViewed(screen: .home))
+                analytics.track(.tapped(target: .close, screen: .shop))
+            """)
+            self.assertEqual(gen.audit(self.schema(), roots), [])
+
+    def test_missing_value_names_the_type_and_its_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, "view.trackScreen(.screenViewed(screen: .home))\n")
+            problems = gen.audit(self.schema(), roots)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ScreenName.shop を撃っている場所が無い", problems[0])
+        self.assertIn("screen_viewed.screen", problems[0])
+        self.assertIn("tapped.screen", problems[0])
+
+    def test_a_common_literal_does_not_demand_app_literals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, """
+                analytics.track(.paywallClosed(source: .onboarding, pwId: id, result: .dismissed, via: .later, openS: 1))
+                analytics.track(.paywallClosed(source: source, pwId: id, result: .dismissed, via: .later, openS: 1))
+            """)
+            self.assertEqual(gen.audit(self.schema(), roots), [])
+
+    def test_events_built_away_from_track_are_found(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, """
+                struct PaywallVisit {
+                    var shown: AppEvent { .paywallShown(source: .teaser, pwId: id, nth: nth) }
+                }
+                send { .paywallShown(source: .gate402, pwId: $0, nth: 1) }
+                view.trackImpression(visit.shown)
+            """)
+            schema = self.schema()
+            self.assertEqual(gen.audit(schema, roots), [])
+            self.assertNotIn("paywall_shown", gen.unfired_common(schema, roots))
+
+    def test_generated_files_and_comments_do_not_count(self):
+        schema = app("""\
+            events:
+              - name: entry_saved
+                kind: outcome
+                dedup: always
+        """)
+        with tempfile.TemporaryDirectory() as directory:
+            write_sources(directory, gen.render(schema), name="AppAnalytics.swift")
+            roots = write_sources(directory, "// analytics.track(.entrySaved)\n")
+            self.assertEqual(gen.audit(schema, roots), ["entry_saved（.entrySaved）を撃っている場所が無い"])
+
+
+class TrackReason(unittest.TestCase):
+
+    SITE = "analytics.track(.paywallShown(source: .settings, pwId: id, nth: 1))\n"
+
+    def test_impression_through_track_fails_without_a_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            problems = gen.audit(app(), write_sources(directory, self.SITE))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("track_reason", problems[0])
+
+    def test_reason_in_extend_allows_track_and_keeps_track_impression(self):
+        schema = app("""\
+            extend:
+              - name: paywall_shown
+                track_reason: シートを出したコールバックから送る
+        """)
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, self.SITE + "view.trackImpression(.paywallShown(source: .limit, pwId: id, nth: 2))\n")
+            self.assertEqual(gen.audit(schema, roots), [])
+
+    def test_reason_only_on_screen_or_impression(self):
+        with self.assertRaises(gen.SchemaError) as caught:
+            app("""\
+                events:
+                  - name: entry_saved
+                    kind: outcome
+                    dedup: always
+                    track_reason: なぜか
+            """)
+        self.assertIn("screen か impression", str(caught.exception))
+        with self.assertRaises(gen.SchemaError):
+            app("""\
+                extend:
+                  - name: paywall_closed
+                    track_reason: なぜか
+            """)
+
+    def test_app_event_can_carry_a_reason(self):
+        schema = app("""\
+            events:
+              - name: nudge_offer_shown
+                kind: impression
+                dedup: always
+                track_reason: お知らせのタスクから送る
+        """)
+        with tempfile.TemporaryDirectory() as directory:
+            roots = write_sources(directory, "analytics.track(.nudgeOfferShown)\n")
+            self.assertEqual(gen.audit(schema, roots), [])
+
+
+class CommonAdditions(unittest.TestCase):
+
+    def test_sign_in_provider_has_other_and_is_extensible(self):
+        signed_in = next(e for e in gen.load(COMMON).events if e.name == "signed_in")
+        provider = next(p for p in signed_in.parameters if p.key == "provider")
+        self.assertIn("other", provider.values)
+        self.assertTrue(provider.extensible)
 
 
 if __name__ == "__main__":

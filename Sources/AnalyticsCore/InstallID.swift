@@ -30,6 +30,30 @@ public enum InstallID {
         return made
     }
 
+    /// Takes over the ID an earlier version kept somewhere else, so the install stays the same install.
+    ///
+    /// For moving onto this package: an app that already sent an install ID (and tied it to a
+    /// subscription service or its own receiver) passes it here once at launch, before anything
+    /// reads ``current(defaults:)``. After that, delete the old copy, so that ``reset(defaults:)``
+    /// cannot be undone by adopting it again.
+    ///
+    /// It does nothing when an ID is already stored — that install already has one, and replacing
+    /// it would split it in two — and nothing when `id` is not a UUID, which is what the envelope
+    /// carries.
+    ///
+    /// - Returns: `true` when `id` was stored, lower-cased
+    @discardableResult
+    public static func adopt(_ id: String, defaults: UserDefaults = .standard) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard UUID(uuidString: id) != nil else { return false }
+        if let stored = defaults.string(forKey: key), UUID(uuidString: stored) != nil {
+            return false
+        }
+        defaults.set(id.lowercased(), forKey: key)
+        return true
+    }
+
     /// Forgets the ID, so the next ``current(defaults:)`` makes a new one.
     public static func reset(defaults: UserDefaults = .standard) {
         lock.lock()

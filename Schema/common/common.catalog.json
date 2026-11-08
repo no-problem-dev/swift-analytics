@@ -1,7 +1,7 @@
 {
   "format": 1,
   "generator": "swift-analytics/Scripts/analytics-gen.py",
-  "catalogVersion": 1,
+  "catalogVersion": 2,
   "dialect": "envelope",
   "limits": {
     "value": 64,
@@ -143,9 +143,10 @@
             "apple",
             "google",
             "anonymous",
-            "email"
+            "email",
+            "other"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -571,7 +572,8 @@
             "lifetime"
           ],
           "extensible": false,
-          "appValues": []
+          "appValues": [],
+          "optional": true
         },
         {
           "key": "open_s",

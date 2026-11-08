@@ -8,7 +8,7 @@ import Foundation
 ///
 /// There is no way to take the mark back on purpose: the receiver has already been told, and an
 /// install that was internal once is not a clean sample afterwards either.
-public enum InternalDevice {
+public enum AnalyticsInternalDevice {
 
     static let key = "analytics.internalDevice"
 
@@ -34,3 +34,11 @@ public enum InternalDevice {
         defaults.removeObject(forKey: key)
     }
 }
+
+/// The name ``AnalyticsInternalDevice`` had in 0.3.0.
+///
+/// It was renamed because apps tend to have an `InternalDevice` of their own (the hidden switch, a
+/// developer menu), and a file importing both modules could not name either without qualifying it.
+/// This alias keeps 0.3.0 code compiling; it goes away in 0.4.0, and only then does the clash end.
+@available(*, deprecated, renamed: "AnalyticsInternalDevice")
+public typealias InternalDevice = AnalyticsInternalDevice
