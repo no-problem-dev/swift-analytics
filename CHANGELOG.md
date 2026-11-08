@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-08
+
 ### Fixed
 
 - `analytics-gen.py audit` no longer reports enum values as unfired when the app builds them away
