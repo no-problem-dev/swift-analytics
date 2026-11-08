@@ -1172,6 +1172,46 @@ class AuditTypedValues(unittest.TestCase):
             "Area.invite を撃っている場所が無い（error_shown.area のどれからも）",
         ])
 
+    def test_a_switch_into_a_typed_tuple_counts(self):
+        """読書メモリーの `OnboardingMilestone.event`。タプルの型に T がある変数へ switch の式で入れる。"""
+        wired = self.WIRED.replace("noteArea(.sync)", "").replace("let inviteArea: AppEvent.Area = .invite", "")
+        problems = self.problems(wired + """
+            var event: AppEvent {
+                let (area, index): (AppEvent.Area, Int) = switch self {
+                case .first: (.sync, 1)
+                case .second: (.invite, 2)
+                }
+                return .errorShown(area: area)
+            }
+        """)
+        self.assertEqual(problems, [])
+        problems = self.problems(wired + """
+            let pair: (area: AppEvent.Area, count: Int)? = (.sync, 1)
+        """)
+        self.assertEqual(problems, ["Area.invite を撃っている場所が無い（error_shown.area のどれからも）"])
+
+    def test_a_tuple_without_the_type_does_not_count(self):
+        wired = self.WIRED.replace("noteArea(.sync)", "")
+        problems = self.problems(wired + """
+            let (place, index): (Domain.Place, Int) = switch self { case .first: (.sync, 1) }
+        """)
+        self.assertEqual(problems, ["Area.sync を撃っている場所が無い（error_shown.area のどれからも）"])
+
+    def test_a_default_argument_counts(self):
+        """読書メモリーの `BookSearchView.init(registrationSource: … = .search)`。省いて呼べば既定値が渡る。"""
+        wired = self.WIRED.replace("noteArea(.sync)", "")
+        problems = self.problems(wired + """
+            struct Search: View {
+                let area: AppEvent.Area
+                init(area: AppEvent.Area = .sync, onDone: (() -> Void)? = nil) { self.area = area }
+            }
+        """)
+        self.assertEqual(problems, [])
+        problems = self.problems(wired + """
+            init(count: Int = 0, area: AppEvent.Area) {}
+        """)
+        self.assertEqual(problems, ["Area.sync を撃っている場所が無い（error_shown.area のどれからも）"])
+
 
 class AuditSameNamedModifier(unittest.TestCase):
     """出来事と同じ名前の View の modifier は、出来事を作る所ではない。渡した値は数える。"""
