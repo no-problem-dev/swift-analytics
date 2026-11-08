@@ -90,7 +90,15 @@ raw 値は書いたままが送られる。
 - `labels` は `edges` より 1 つ多い。`edges` は小さい順に、重ねずに書く
 - 名前は英小文字・数字・`_` `+` `.` `-` だけ。同じ名前は 2 回書けない。`+` を含む名前は引用符で書く
 - Swift は `AnalyticsValue.bucket(_:edges:labels:)` で送る。`--json` と `--ts` の `values` は `labels` になる
-- 引数にも属性にも書ける。共通の引数の `labels` は `extend:` で変えられない
+- 引数にも属性にも書ける。共通の bucket の引数の `labels` は、アプリが `extend:` で決められる（`edges` は共通のまま）
+
+```yaml
+extend:
+  - name: paywall_shown
+    parameters:
+      nth:
+        labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "10+"]   # 共通の edges [1…11] に名前だけ付ける
+```
 
 ### optional
 
@@ -189,7 +197,7 @@ events:
 | `include` は `dialect: envelope` のカタログでだけ使える。共通の出来事は固定の封筒で送る前提で、ga4 の予約名（`first_open`）にも first_party の列の数にも収まらない | 落ちる |
 | 共通の出来事を `events:` に書き直さない。値や引数は `extend:` で足す | 落ちる |
 | `extend:` に書けるのは共通カタログにある出来事だけ | 落ちる |
-| 共通の引数に書けるのは `values` と `optional: true` だけ（`type`・`type_name`・`edges`・`pattern` などは変えられない） | 落ちる |
+| 共通の引数に書けるのは `values`・bucket の `labels`・`optional: true` だけ（`type`・`type_name`・`edges`・`pattern` などは変えられない） | 落ちる |
 | 値を足せるのは `extensible: true` の enum だけ。共通の値をもう一度書くこと、同じ値を 2 回足すことはできない | 落ちる |
 | 共通の値・引数を消す書き方は無い | — |
 
@@ -208,9 +216,11 @@ events:
         values: [onboarding, paywall, settings, whats_new]
 ```
 
-`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。共通カタログの enum は、
-AnalyticsCore が送る `FirstOpenKind` のほかはどれも `extensible: true`（`PaywallCloseResult` の `continue_free`、
-`PlanPeriod` の `quarterly` などをアプリが足せる）。アプリのカタログの enum に書いてもよいが、
+`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。共通カタログの enum はどれも
+`extensible: true`（`PaywallCloseResult` の `continue_free`、`PlanPeriod` の `quarterly`、`FirstOpenKind` の
+`existing` などをアプリが足せる）。AnalyticsCore が送る `FirstOpenKind` に足した値は
+`FirstLaunch.recordLaunch(sendingTo:…, kind:)` で送る（パッケージの判定 `fresh`・`upgraded` を受けて、送る値を返す）。
+**受ける側は `first_open.kind` の `fresh` だけを新規と読む**ので、値を足しても新規の数は変わらない。アプリのカタログの enum に書いてもよいが、
 `--json` と `--ts` に載るだけで生成器の動きは変わらない。
 
 ### sent_by: package

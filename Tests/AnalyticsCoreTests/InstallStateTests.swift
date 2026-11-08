@@ -106,6 +106,26 @@ struct OccurrenceCountTests {
         }
         #expect(OccurrenceCount.current("x", defaults: defaults) == 100)
     }
+
+    @Test("adopt は前の版の数を一度だけ足し、次の next はその続きから数える")
+    func adoptsOnce() {
+        let defaults = makeDefaults()
+        #expect(OccurrenceCount.adopt("paywall_shown", count: 4, defaults: defaults) == 4)
+        #expect(OccurrenceCount.adopt("paywall_shown", count: 4, defaults: defaults) == 4)
+        #expect(OccurrenceCount.next("paywall_shown", defaults: defaults) == 5)
+        #expect(OccurrenceCount.adopt("whats_new_shown", count: -2, defaults: defaults) == 0)
+        #expect(OccurrenceCount.adopt("whats_new_shown", count: 3, defaults: defaults) == 0)
+    }
+
+    @Test("adopt の前に数えていた分には足す。resetAll の後に古い数は戻らない")
+    func adoptAddsAndSurvivesReset() {
+        let defaults = makeDefaults()
+        OccurrenceCount.next("paywall_shown", defaults: defaults)
+        #expect(OccurrenceCount.adopt("paywall_shown", count: 2, defaults: defaults) == 3)
+        OccurrenceCount.resetAll(defaults: defaults)
+        #expect(OccurrenceCount.adopt("paywall_shown", count: 2, defaults: defaults) == 0)
+        #expect(OccurrenceCount.next("paywall_shown", defaults: defaults) == 1)
+    }
 }
 
 @Suite("ビルドの経路")
@@ -182,6 +202,37 @@ struct FirstLaunchTests {
         FirstLaunch.recordLaunch(sendingTo: recorder, defaults: defaults)
         FirstLaunch.reset(defaults: defaults)
         #expect(FirstLaunch.recordLaunch(sendingTo: recorder, defaults: defaults) == .fresh)
+    }
+
+    @Test("kind を決める口: パッケージの判定を受けてアプリの値を1回だけ送る")
+    func appDecidesKind() {
+        let defaults = makeDefaults()
+        let recorder = RecordingAnalytics()
+        var suggestions: [FirstOpenKind] = []
+        let sent = FirstLaunch.recordLaunch(sendingTo: recorder, hasPriorData: true, defaults: defaults) { suggested in
+            suggestions.append(suggested)
+            return "existing"
+        }
+        #expect(sent == "existing")
+        #expect(suggestions == [.upgraded])
+        #expect(FirstLaunch.recordLaunch(sendingTo: recorder, defaults: defaults) { $0.rawValue } == nil)
+        #expect(recorder.count(of: "first_open") == 1)
+        #expect(recorder.events.first?.parameters == ["kind": .text("existing")])
+        #expect(recorder.events.first?.kind == .outcome)
+        #expect(recorder.events.first?.dedup == .install)
+    }
+
+    @Test("kind を決める口でも sentBefore なら送らず、決める関数も呼ばない")
+    func appDecidesKindRespectsSentBefore() {
+        let recorder = RecordingAnalytics()
+        var called = false
+        let sent = FirstLaunch.recordLaunch(sendingTo: recorder, sentBefore: true, defaults: makeDefaults()) { _ in
+            called = true
+            return "existing"
+        }
+        #expect(sent == nil)
+        #expect(!called)
+        #expect(recorder.count(of: "first_open") == 0)
     }
 }
 

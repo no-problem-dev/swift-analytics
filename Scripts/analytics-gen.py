@@ -602,12 +602,20 @@ def _apply_extend(items, included: list[Event]) -> None:
             where = f"extend: {name}.{key}"
             if not isinstance(spec, dict):
                 raise SchemaError(f"{where} は `values: [...]` のマップ")
-            changed = sorted(set(spec) - {"values", "optional"})
+            changed = sorted(set(spec) - {"values", "optional", "labels"})
             if changed:
                 raise SchemaError(
                     f"{where}: 共通の引数の {', '.join(changed)} は変えられない"
-                    "（書けるのは extensible な enum の values と optional: true だけ）"
+                    "（書けるのは extensible な enum の values・bucket の labels・optional: true だけ）"
                 )
+            if "labels" in spec:
+                # 受け手がもう読んでいる帯の名前で送るアプリのため。edges は共通のまま（数え方は変えない）
+                if existing.type != "bucket":
+                    raise SchemaError(f"{where}: labels は bucket の引数にだけ書ける")
+                labels = spec["labels"]
+                if not isinstance(labels, list) or not labels:
+                    raise SchemaError(f"{where}: labels は帯の名前の並び")
+                existing.labels = [str(label) for label in labels]
             if "optional" in spec:
                 # 共通の引数を、このアプリでは無いことがある引数にする。必須に戻す書き方は無い
                 if spec["optional"] is not True:

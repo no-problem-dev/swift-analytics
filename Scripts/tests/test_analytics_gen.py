@@ -475,13 +475,83 @@ class IncludeCommon(unittest.TestCase):
         self.assertEqual(shown.parameters[-1].origin, "app")
 
     def test_cannot_add_values_to_closed_enum(self):
-        self.assertRejected("""\
+        with tempfile.TemporaryDirectory() as directory:
+            custom = Path(directory) / "mine.yaml"
+            custom.write_text(textwrap.dedent("""\
+                version: 1
+                name: common
+                dialect: envelope
+                events:
+                  - name: a_done
+                    kind: outcome
+                    dedup: always
+                    parameters:
+                      mode: { type: enum, type_name: Mode, values: [a, b] }
+            """), encoding="utf-8")
+            path = Path(directory) / "analytics.yaml"
+            path.write_text(textwrap.dedent("""\
+                dialect: envelope
+                include: common
+                extend:
+                  - name: a_done
+                    parameters:
+                      mode:
+                        values: [c]
+            """), encoding="utf-8")
+            with self.assertRaises(gen.SchemaError) as caught:
+                gen.load(path, common=custom)
+        self.assertIn("extensible: true の enum でない", str(caught.exception))
+
+    def test_app_can_add_first_open_kinds(self):
+        schema = app("""\
             extend:
               - name: first_open
                 parameters:
                   kind:
                     values: [existing]
-        """, "extensible: true の enum でない")
+        """)
+        first_open = next(e for e in json.loads(gen.render_json(schema))["events"] if e["name"] == "first_open")
+        self.assertEqual(first_open["parameters"][0]["values"], ["fresh", "upgraded", "existing"])
+        # パッケージが送る出来事なので、足しても Swift の型には出ない
+        self.assertNotIn("FirstOpenKind", gen.render(schema))
+
+    def test_extend_can_name_the_bands_of_a_common_bucket(self):
+        schema = app("""\
+            extend:
+              - name: paywall_shown
+                parameters:
+                  nth:
+                    labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "10+"]
+        """)
+        swift = gen.render(schema)
+        self.assertIn('labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "10+"]', swift)
+        shown = next(e for e in json.loads(gen.render_json(schema))["events"] if e["name"] == "paywall_shown")
+        nth = next(p for p in shown["parameters"] if p["key"] == "nth")
+        self.assertEqual(nth["values"][-1], "10+")
+        self.assertEqual(nth["edges"], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+
+    def test_extend_labels_are_checked_and_only_for_buckets(self):
+        self.assertRejected("""\
+            extend:
+              - name: paywall_shown
+                parameters:
+                  nth:
+                    labels: ["0", "1"]
+        """, "1 つ多く")
+        self.assertRejected("""\
+            extend:
+              - name: screen_viewed
+                parameters:
+                  screen:
+                    labels: [a]
+        """, "bucket の引数にだけ")
+        self.assertRejected("""\
+            extend:
+              - name: paywall_shown
+                parameters:
+                  nth:
+                    edges: [1, 5]
+        """, "変えられない")
 
     def test_cannot_change_type_of_common_parameter(self):
         self.assertRejected("""\
@@ -964,12 +1034,12 @@ class BucketLabels(unittest.TestCase):
 
 class ExtensibleCommonEnums(unittest.TestCase):
 
-    def test_only_first_open_kind_is_closed(self):
+    def test_every_common_enum_is_extensible(self):
         closed = {
             p.swift_type_name for e in gen.load(COMMON).events for p in e.parameters
             if p.type == "enum" and not p.extensible
         }
-        self.assertEqual(closed, {"FirstOpenKind"})
+        self.assertEqual(closed, set())
 
     def test_app_can_add_close_results(self):
         schema = app("""\

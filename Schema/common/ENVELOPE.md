@@ -38,6 +38,8 @@
 
 - `app_version`・`build`・`uid` は**出来事が起きたときの値**。`AnalyticsBatchSink` は、これが違う出来事を別の束で送る
   （更新の前に溜めた出来事を、更新の後の版で送らない）
+- 共通の出来事の enum の値は、アプリが足すことがある（`extend:`・[SCHEMA.md](../SCHEMA.md) の extensible）。受ける側は知っている値だけで決める:
+  `first_open.kind` は `fresh` だけを新規と読み、ほか（`upgraded`・アプリが足した `existing` など）は前から使っていた人として扱う
 - 利用者の属性（`AnalyticsUserProperty`）は封筒に載らない。プランなどの状態はサーバー（購入は RevenueCat）が正本
 - 受け口の応答の読み方は固定: `2xx` は届いた・`401`・`403`・`408`・`429`・`5xx` は残して後で送る（`Retry-After` を守る）・ほかは捨てる
 

@@ -24,6 +24,10 @@ public enum OccurrenceCount {
 
     static let prefix = "analytics.count."
 
+    /// Where ``adopt(_:count:defaults:)`` notes that it has run. Outside `prefix`, so
+    /// ``resetAll(defaults:)`` does not let an old count come back in.
+    static let adoptedPrefix = "analytics.countAdopted."
+
     /// Keeps two calls at once from both reading the same count.
     private static let lock = OSAllocatedUnfairLock()
 
@@ -38,6 +42,35 @@ public enum OccurrenceCount {
         let count = max(0, defaults.integer(forKey: prefix + key)) + 1
         defaults.set(count, forKey: prefix + key)
         return count
+    }
+
+    /// Carries over a count the app kept itself before it used this type, once per `key`.
+    ///
+    /// Call it at launch, before the first ``next(_:defaults:)``, with the count from the app's own
+    /// key (`funnel_paywall_display_count`). The count is added to what is here, and the call is
+    /// noted, so later calls do nothing — the old key can stay where it is. The note survives
+    /// ``reset(_:defaults:)`` and ``resetAll(defaults:)``, so a person who asked to be forgotten
+    /// does not get the old count back on the next launch.
+    ///
+    /// ```swift
+    /// OccurrenceCount.adopt("paywall_shown", count: UserDefaults.standard.integer(forKey: "funnel_paywall_display_count"))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - key: What is counted, the same key given to ``next(_:defaults:)``
+    ///   - count: The count the earlier version kept. 0 or less adds nothing, and still counts as
+    ///     the one carry-over
+    /// - Returns: The count for `key` after the call
+    @discardableResult
+    public static func adopt(_ key: String, count: Int, defaults: UserDefaults = .standard) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = max(0, defaults.integer(forKey: prefix + key))
+        guard !defaults.bool(forKey: adoptedPrefix + key) else { return current }
+        defaults.set(true, forKey: adoptedPrefix + key)
+        let total = current + max(0, count)
+        defaults.set(total, forKey: prefix + key)
+        return total
     }
 
     /// The count for `key` so far, without adding to it. 0 when it has not happened.
