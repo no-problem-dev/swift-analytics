@@ -18,7 +18,8 @@ public enum InstallID {
 
     /// The stored ID, made and stored first if there is none (or what is stored is not a UUID).
     ///
-    /// Lower-case, as `UUID().uuidString.lowercased()` writes it.
+    /// A made ID is lower-case, as `UUID().uuidString.lowercased()` writes it. An adopted one is
+    /// returned exactly as it was passed to ``adopt(_:defaults:)``.
     public static func current(defaults: UserDefaults = .standard) -> String {
         lock.lock()
         defer { lock.unlock() }
@@ -41,7 +42,10 @@ public enum InstallID {
     /// it would split it in two — and nothing when `id` is not a UUID, which is what the envelope
     /// carries.
     ///
-    /// - Returns: `true` when `id` was stored, lower-cased
+    /// `id` is stored exactly as passed, without changing its case: the earlier version's rows
+    /// carry it that way, and a receiver that compares IDs as text would otherwise see two installs.
+    ///
+    /// - Returns: `true` when `id` was stored
     @discardableResult
     public static func adopt(_ id: String, defaults: UserDefaults = .standard) -> Bool {
         lock.lock()
@@ -50,7 +54,7 @@ public enum InstallID {
         if let stored = defaults.string(forKey: key), UUID(uuidString: stored) != nil {
             return false
         }
-        defaults.set(id.lowercased(), forKey: key)
+        defaults.set(id, forKey: key)
         return true
     }
 

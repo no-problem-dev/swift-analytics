@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `InstallID.adopt(_:defaults:)` stores the ID exactly as passed. It lower-cased it before, so an
+  app whose earlier version sent upper-case IDs got rows under two IDs that differ only in case,
+  and the receiver counted one install as two. IDs made by `InstallID.current(defaults:)` are still
+  lower-case. An app that already adopted on 0.3.x keeps the lower-cased copy; it is not rewritten
+
+### Deprecated
+
+- The `InternalDevice` alias of `AnalyticsInternalDevice` (deprecated in 0.3.1) is removed in 0.4.0.
+  Until then an app with an `InternalDevice` of its own has to qualify it with its module name
+  where `AnalyticsCore` is imported; after 0.4.0 the plain name resolves to the app's type
+
 ## [0.3.2] - 2026-11-08
 
 ### Fixed
