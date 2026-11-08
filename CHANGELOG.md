@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-08
+
 ### Fixed
 
 - `analytics-gen.py audit` now also counts two more places where an app writes enum values:
