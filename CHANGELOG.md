@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-08
+
 ### Added
 
 - `OccurrenceCount.adopt(_:count:defaults:)` carries over a count the app kept itself before it used
