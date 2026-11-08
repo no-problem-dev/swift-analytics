@@ -366,6 +366,8 @@ class Parameter:
     type: str
     values: list[str] = field(default_factory=list)
     edges: list[int] = field(default_factory=list)
+    # bucket の帯の名前（`labels:`）。空なら AnalyticsValue.bucket(_:edges:) の名前（`1_5`・`16_plus`）
+    labels: list[str] = field(default_factory=list)
     description: str = ""
     type_name: str = ""
     pattern: str = ""
@@ -423,6 +425,7 @@ class UserProperty:
     type: str
     values: list[str] = field(default_factory=list)
     edges: list[int] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
     description: str = ""
     type_name: str = ""
 
@@ -713,6 +716,7 @@ def _parameter(key: str, value: dict) -> Parameter:
         type=_require(value, "type", context=key),
         values=list(value.get("values") or []),
         edges=list(value.get("edges") or []),
+        labels=[str(label) for label in value.get("labels") or []],
         description=value.get("description", ""),
         type_name=str(value.get("type_name") or ""),
         pattern=str(value.get("pattern") or ""),
@@ -728,6 +732,7 @@ def _property(item: dict) -> UserProperty:
         type=_require(item, "type", context=name),
         values=list(item.get("values") or []),
         edges=list(item.get("edges") or []),
+        labels=[str(label) for label in item.get("labels") or []],
         description=item.get("description", ""),
         type_name=str(item.get("type_name") or ""),
     )
@@ -820,6 +825,7 @@ def validate(schema: Schema) -> None:
             problems.append(f"{prop.name}: enum なのに values が無い")
         if prop.type == "bucket" and not prop.edges:
             problems.append(f"{prop.name}: bucket なのに edges が無い")
+        problems += _validate_labels(prop.name, prop.type, prop.edges, prop.labels, value_limit=schema.value_limit)
         if schema.dialect == "ga4":
             problems += _validate_ga4_name(prop.name, reserved_names=False)
         if schema.dialect in ("first_party", "envelope"):
@@ -853,11 +859,47 @@ def _validate_parameter(owner: str, parameter: Parameter, *, value_limit: int) -
                 problems.append(f"{owner}.{parameter.key}: 値 {value} が {value_limit} 字を超える")
     if parameter.type == "bucket" and not parameter.edges:
         problems.append(f"{owner}.{parameter.key}: bucket なのに edges が無い")
+    problems += _validate_labels(f"{owner}.{parameter.key}", parameter.type, parameter.edges, parameter.labels,
+                                 value_limit=value_limit)
     if parameter.type == "token":
         problems += _validate_token(owner, parameter, value_limit=value_limit)
     elif parameter.pattern or parameter.max_length:
         problems.append(f"{owner}.{parameter.key}: pattern と max_length は token にだけ書ける")
     return problems
+
+
+def _validate_labels(where: str, type_: str, edges: list[int], labels: list[str], *, value_limit: int) -> list[str]:
+    """bucket の帯の名前（`labels:`）。1 つ目が一番下の edge より下、続きが edge ごとの帯（昇順）。"""
+    if not labels:
+        return []
+    if type_ != "bucket":
+        return [f"{where}: labels は bucket にだけ書ける"]
+    problems: list[str] = []
+    if edges != sorted(edges) or len(set(edges)) != len(edges):
+        problems.append(f"{where}: labels を書くときは edges を小さい順に重ねずに書く（{edges}）")
+    if len(labels) != len(edges) + 1:
+        problems.append(
+            f"{where}: labels は edges より 1 つ多く書く（一番下の edge より下の帯が 1 つ目）。edges {len(edges)} 個・labels {len(labels)} 個"
+        )
+    if len(set(map(str, labels))) != len(labels):
+        problems.append(f"{where}: labels に同じ名前が 2 回ある")
+    for label in labels:
+        if not isinstance(label, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_+.-]*", label):
+            problems.append(f"{where}: 帯の名前 {label} は英小文字・数字・_ + . - だけ（\"10+\" のように引用符で書く）")
+        elif len(label) > value_limit:
+            problems.append(f"{where}: 帯の名前 {label} が {value_limit} 字を超える")
+    return problems
+
+
+def bucket_values(edges: list[int], labels: list[str]) -> list[str]:
+    """送られうる帯の名前の全部。`labels:` があればそれ、無ければ AnalyticsValue.bucket(_:edges:) の名前。"""
+    return list(labels) if labels else bucket_labels(edges)
+
+
+def _swift_bucket(value: str, edges: list[int], labels: list[str]) -> str:
+    if not labels:
+        return f".bucket({value}, edges: {edges})"
+    return f".bucket({value}, edges: {edges}, labels: [{', '.join(json.dumps(label) for label in labels)}])"
 
 
 def _validate_token(owner: str, parameter: Parameter, *, value_limit: int) -> list[str]:
@@ -1099,7 +1141,7 @@ def _value_expression(parameter: Parameter) -> str:
         "count": f".count({key})",
         "number": f".number({key})",
         "flag": f".flag({key})",
-        "bucket": f".bucket({key}, edges: {parameter.edges})",
+        "bucket": _swift_bucket(key, parameter.edges, parameter.labels),
         "token": f".text({key}.rawValue)",
     }[parameter.type]
 
@@ -1135,7 +1177,7 @@ def _render_properties(schema: Schema) -> list[str]:
             lines.append(f"        case let .{prop.case}(value): return value.rawValue")
         elif prop.type == "bucket":
             lines.append(
-                f"        case let .{prop.case}(value): return AnalyticsValue.bucket(value, edges: {prop.edges}).description"
+                f"        case let .{prop.case}(value): return AnalyticsValue{_swift_bucket('value', prop.edges, prop.labels)}.description"
             )
         else:
             lines.append(f"        case let .{prop.case}(value): return String(describing: value)")
@@ -1213,7 +1255,8 @@ def bucket_labels(edges: list[int]) -> list[str]:
     return labels
 
 
-def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter: Parameter | None = None) -> dict:
+def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter: Parameter | None = None,
+                      labels: list[str] | None = None) -> dict:
     shape: dict = {"type": type_}
     if type_ == "enum":
         shape["values"] = list(values)
@@ -1223,7 +1266,7 @@ def _json_value_shape(type_: str, values: list[str], edges: list[int], parameter
                 shape["appValues"] = list(parameter.app_values)
     elif type_ == "bucket":
         shape["edges"] = sorted(edges)
-        shape["values"] = bucket_labels(edges)
+        shape["values"] = bucket_values(edges, labels or [])
     elif type_ == "token" and parameter is not None:
         shape["pattern"] = parameter.pattern
         shape["maxLength"] = parameter.max_length
@@ -1259,7 +1302,7 @@ def render_json(schema: Schema) -> str:
                 "origin": event.origin,
                 "sentBy": event.sent_by,
                 "parameters": [
-                    {"key": p.key, "origin": p.origin, **_json_value_shape(p.type, p.values, p.edges, p),
+                    {"key": p.key, "origin": p.origin, **_json_value_shape(p.type, p.values, p.edges, p, p.labels),
                      **({"optional": True} if p.optional else {})}
                     for p in event.parameters
                 ],
@@ -1267,7 +1310,7 @@ def render_json(schema: Schema) -> str:
             for event in schema.events
         ],
         "userProperties": [
-            {"name": prop.name, **_json_value_shape(prop.type, prop.values, prop.edges)}
+            {"name": prop.name, **_json_value_shape(prop.type, prop.values, prop.edges, labels=prop.labels)}
             for prop in schema.properties
         ],
         "facts": [
@@ -1293,7 +1336,7 @@ def _ts_type(parameter: Parameter) -> str:
     if parameter.type == "enum":
         return parameter.swift_type_name
     if parameter.type == "bucket":
-        return " | ".join(_ts_string(label) for label in bucket_labels(parameter.edges))
+        return " | ".join(_ts_string(label) for label in bucket_values(parameter.edges, parameter.labels))
     return {"count": "number", "number": "number", "flag": "boolean", "token": "string"}[parameter.type]
 
 
@@ -1306,7 +1349,7 @@ def _ts_shape(parameter: Parameter) -> str:
         fields.append(f"extensible: {'true' if parameter.extensible else 'false'}")
     elif parameter.type == "bucket":
         fields.append(f"edges: {json.dumps(sorted(parameter.edges))}")
-        fields.append(f"values: {json.dumps(bucket_labels(parameter.edges))}")
+        fields.append(f"values: {json.dumps(bucket_values(parameter.edges, parameter.labels), ensure_ascii=False)}")
     elif parameter.type == "token":
         fields.append(f"pattern: {_ts_string(parameter.pattern)}")
         fields.append(f"maxLength: {parameter.max_length}")

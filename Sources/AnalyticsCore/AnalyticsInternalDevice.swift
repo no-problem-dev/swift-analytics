@@ -19,11 +19,21 @@ public enum AnalyticsInternalDevice {
 
     /// Marks the device as internal and sends `internal_device`, unless it was marked already.
     ///
-    /// - Returns: `true` when this call marked it (and sent the event), `false` when it was
-    ///   marked before
+    /// - Parameters:
+    ///   - analytics: Where `internal_device` goes
+    ///   - defaults: Where the mark is kept
+    ///   - sendAgain: Send `internal_device` even though the device is marked. For apps whose
+    ///     receiver keeps the mark by uid as well as by install: call it with `true` when the
+    ///     signed-in person changes on a marked device
+    /// - Returns: `true` when this call sent the event, `false` when it was marked before and
+    ///   `sendAgain` was `false`
     @discardableResult
-    public static func mark(sendingTo analytics: any AnalyticsClient, defaults: UserDefaults = .standard) -> Bool {
-        guard !defaults.bool(forKey: key) else { return false }
+    public static func mark(
+        sendingTo analytics: any AnalyticsClient,
+        defaults: UserDefaults = .standard,
+        sendAgain: Bool = false
+    ) -> Bool {
+        guard sendAgain || !defaults.bool(forKey: key) else { return false }
         defaults.set(true, forKey: key)
         analytics.track(CommonEvent.internalDevice)
         return true

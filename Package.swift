@@ -27,9 +27,6 @@ let package = Package(
         // Test doubles. **Never import this from a shipping target.**
         .library(name: "AnalyticsTesting", targets: ["AnalyticsTesting"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0")
-    ],
     targets: [
         .target(name: "AnalyticsCore"),
         .target(name: "AnalyticsSwiftUI", dependencies: ["AnalyticsCore"]),

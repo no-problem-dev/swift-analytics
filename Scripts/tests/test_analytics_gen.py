@@ -477,10 +477,10 @@ class IncludeCommon(unittest.TestCase):
     def test_cannot_add_values_to_closed_enum(self):
         self.assertRejected("""\
             extend:
-              - name: paywall_plan_selected
+              - name: first_open
                 parameters:
-                  to:
-                    values: [daily]
+                  kind:
+                    values: [existing]
         """, "extensible: true の enum でない")
 
     def test_cannot_change_type_of_common_parameter(self):
@@ -907,6 +907,82 @@ class CommonAdditions(unittest.TestCase):
         provider = next(p for p in signed_in.parameters if p.key == "provider")
         self.assertIn("other", provider.values)
         self.assertTrue(provider.extensible)
+
+
+class BucketLabels(unittest.TestCase):
+
+    def body(self, labels: str, edges: str = "[1, 2, 10]") -> str:
+        return f"""\
+            dialect: envelope
+            events:
+              - name: a_done
+                kind: outcome
+                dedup: always
+                parameters:
+                  days: {{ type: bucket, edges: {edges}, labels: {labels} }}
+            user_properties:
+              - name: streak_band
+                type: bucket
+                edges: {edges}
+                labels: {labels}
+        """
+
+    def test_labels_reach_swift_json_and_ts(self):
+        schema = load(self.body('[0, 1, "2_9", "10+"]'))
+        swift = gen.render(schema)
+        self.assertIn('.bucket(days, edges: [1, 2, 10], labels: ["0", "1", "2_9", "10+"])', swift)
+        self.assertIn('AnalyticsValue.bucket(value, edges: [1, 2, 10], labels: ["0", "1", "2_9", "10+"]).description', swift)
+        document = json.loads(gen.render_json(schema))
+        self.assertEqual(document["events"][0]["parameters"][0]["values"], ["0", "1", "2_9", "10+"])
+        self.assertEqual(document["userProperties"][0]["values"], ["0", "1", "2_9", "10+"])
+        self.assertIn('days: "0" | "1" | "2_9" | "10+"', gen.render_ts(schema))
+
+    def test_labels_are_checked(self):
+        for labels, edges, fragment in (
+            ('["0", "1"]', "[1, 2, 10]", "1 つ多く"),
+            ('["0", "1", "1", "x"]', "[1, 2, 10]", "同じ名前"),
+            ('["0", "1", "2", "Ten"]', "[1, 2, 10]", "英小文字"),
+            ('["0", "1", "2", "3"]', "[10, 2, 1]", "小さい順"),
+        ):
+            with self.assertRaises(gen.SchemaError) as caught:
+                load(self.body(labels, edges))
+            self.assertIn(fragment, str(caught.exception))
+
+    def test_labels_only_on_buckets(self):
+        with self.assertRaises(gen.SchemaError) as caught:
+            load("""\
+                dialect: envelope
+                events:
+                  - name: a_done
+                    kind: outcome
+                    dedup: always
+                    parameters:
+                      n: { type: count, labels: [a] }
+            """)
+        self.assertIn("bucket にだけ", str(caught.exception))
+
+
+class ExtensibleCommonEnums(unittest.TestCase):
+
+    def test_only_first_open_kind_is_closed(self):
+        closed = {
+            p.swift_type_name for e in gen.load(COMMON).events for p in e.parameters
+            if p.type == "enum" and not p.extensible
+        }
+        self.assertEqual(closed, {"FirstOpenKind"})
+
+    def test_app_can_add_close_results(self):
+        schema = app("""\
+            extend:
+              - name: paywall_closed
+                parameters:
+                  result:
+                    values: [continue_free]
+                  product:
+                    values: [quarterly]
+        """)
+        purchase = next(e for e in schema.events if e.name == "purchase_completed")
+        self.assertIn("quarterly", next(p for p in purchase.parameters if p.key == "product").values)
 
 
 if __name__ == "__main__":

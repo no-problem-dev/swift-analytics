@@ -118,6 +118,15 @@ struct BuildChannelTests {
 @Suite("初めての起動")
 struct FirstLaunchTests {
 
+    @Test("アプリが前に自分の規則で送っていれば（sentBefore）送らず、送った印だけ残す")
+    func respectsTheAppsOwnRecord() {
+        let defaults = makeDefaults()
+        let recorder = RecordingAnalytics()
+        #expect(FirstLaunch.recordLaunch(sendingTo: recorder, sentBefore: true, defaults: defaults) == nil)
+        #expect(FirstLaunch.recordLaunch(sendingTo: recorder, defaults: defaults) == nil)
+        #expect(recorder.count(of: "first_open") == 0)
+    }
+
     @Test("新しく入れた端末では first_open{kind: fresh} を1回だけ送る")
     func sendsFreshOnce() {
         let defaults = makeDefaults()
@@ -174,6 +183,15 @@ struct InternalDeviceTests {
 
         #expect(AnalyticsInternalDevice.isInternal(defaults: defaults))
         #expect(recorder.count(of: "internal_device") == 1)
+    }
+
+    @Test("sendAgain なら印があっても送り直す（uid が替わったとき）")
+    func sendsAgainWhenAsked() {
+        let defaults = makeDefaults()
+        let recorder = RecordingAnalytics()
+        AnalyticsInternalDevice.mark(sendingTo: recorder, defaults: defaults)
+        #expect(AnalyticsInternalDevice.mark(sendingTo: recorder, defaults: defaults, sendAgain: true))
+        #expect(recorder.count(of: "internal_device") == 2)
     }
 
     @Test("パッケージが送る出来事は install で数える outcome")

@@ -311,7 +311,7 @@
             "ok",
             "unavailable"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -403,7 +403,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -447,7 +447,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -496,7 +496,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -509,7 +509,7 @@
             "pending",
             "failed"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -593,7 +593,7 @@
             "restored",
             "dismissed"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -607,7 +607,7 @@
             "auto",
             "swipe_down"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -620,7 +620,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": [],
           "optional": true
         },
@@ -670,7 +670,7 @@
             "weekly",
             "lifetime"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -690,7 +690,7 @@
             "paywall",
             "settings"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         },
         {
@@ -702,7 +702,7 @@
             "nothing_to_restore",
             "failed"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -775,7 +775,7 @@
             "finished",
             "swipe_down"
           ],
-          "extensible": false,
+          "extensible": true,
           "appValues": []
         }
       ]
@@ -816,6 +816,23 @@
             "50_199",
             "200_plus"
           ]
+        },
+        {
+          "key": "streak",
+          "origin": "app",
+          "type": "bucket",
+          "edges": [
+            1,
+            2,
+            10
+          ],
+          "values": [
+            "0",
+            "1",
+            "2_9",
+            "10+"
+          ],
+          "optional": true
         }
       ]
     }

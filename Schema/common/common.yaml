@@ -3,7 +3,8 @@
 # 名前・引数・値を変えるときは、受ける側（集計の SQL）も同じ変更で直す。catalogVersion を上げる。
 #
 # 決まり:
-# - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）
+# - `extensible: true` の enum は、アプリが値を足してよい（共通の値は消せない）。
+#   FirstOpenKind 以外の enum は足せる。FirstOpenKind は AnalyticsCore が送る値なので足せない
 # - 引数はアプリが足してよい（共通の引数は消せない・型は変えられない）
 # - `optional: true` の引数は値が無いことがある。生成物は Optional で、nil なら props に載らない
 # - 時刻・人・アプリの版などは封筒（Envelope）が持つ。出来事の引数に入れない
@@ -146,6 +147,7 @@ events:
       result:
         type: enum
         type_name: PaywallLoadResult
+        extensible: true
         values: [ok, unavailable]
       load_s:
         type: number
@@ -174,6 +176,7 @@ events:
       to:
         type: enum
         type_name: PlanPeriod
+        extensible: true
         values: [yearly, monthly, weekly, lifetime]
 
   - name: paywall_purchase_tapped
@@ -183,7 +186,7 @@ events:
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product: { type: enum, type_name: PlanPeriod, extensible: true, values: [yearly, monthly, weekly, lifetime] }
       open_s: { type: count, description: 開いてから押すまでの秒 }
 
   - name: paywall_purchase_result
@@ -193,10 +196,11 @@ events:
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product: { type: enum, type_name: PlanPeriod, extensible: true, values: [yearly, monthly, weekly, lifetime] }
       result:
         type: enum
         type_name: PurchaseResult
+        extensible: true
         values: [purchased, cancelled, pending, failed]
       sheet_s: { type: count, description: 押してから結果が返るまでの秒 }
 
@@ -221,14 +225,17 @@ events:
       result:
         type: enum
         type_name: PaywallCloseResult
+        extensible: true
         values: [purchased, restored, dismissed]
       via:
         type: enum
         type_name: PaywallCloseVia
+        extensible: true
         values: [close_button, later, continue_free, auto, swipe_down]
       product:
         type: enum
         type_name: PlanPeriod
+        extensible: true
         values: [yearly, monthly, weekly, lifetime]
         optional: true
         description: 買った・復元したプラン。買わずに閉じたとき・プランを読めなかったときは無い
@@ -241,7 +248,7 @@ events:
     parameters:
       source: { type: enum, type_name: PaywallSource, extensible: true, values: [onboarding, settings, limit] }
       pw_id: { type: token, pattern: "[a-f0-9]{8}" }
-      product: { type: enum, type_name: PlanPeriod, values: [yearly, monthly, weekly, lifetime] }
+      product: { type: enum, type_name: PlanPeriod, extensible: true, values: [yearly, monthly, weekly, lifetime] }
 
   - name: restore_completed
     kind: outcome
@@ -251,10 +258,12 @@ events:
       source:
         type: enum
         type_name: RestoreSource
+        extensible: true
         values: [paywall, settings]
       result:
         type: enum
         type_name: RestoreResult
+        extensible: true
         values: [restored, nothing_to_restore, failed]
 
   # ---- 評価とお知らせ ----
@@ -291,4 +300,5 @@ events:
       via:
         type: enum
         type_name: WhatsNewCloseVia
+        extensible: true
         values: [close_button, finished, swipe_down]

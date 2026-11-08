@@ -104,7 +104,7 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      result: { type: "enum", origin: "common", values: PaywallLoadResult, extensible: false },
+      result: { type: "enum", origin: "common", values: PaywallLoadResult, extensible: true },
       load_s: { type: "number", origin: "common" },
     },
   },
@@ -121,7 +121,7 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      to: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      to: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
     },
   },
   paywall_purchase_tapped: {
@@ -129,7 +129,7 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
       open_s: { type: "count", origin: "common" },
     },
   },
@@ -138,8 +138,8 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
-      result: { type: "enum", origin: "common", values: PurchaseResult, extensible: false },
+      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
+      result: { type: "enum", origin: "common", values: PurchaseResult, extensible: true },
       sheet_s: { type: "count", origin: "common" },
     },
   },
@@ -156,9 +156,9 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      result: { type: "enum", origin: "common", values: PaywallCloseResult, extensible: false },
-      via: { type: "enum", origin: "common", values: PaywallCloseVia, extensible: false },
-      product: { type: "enum", origin: "common", optional: true, values: PlanPeriod, extensible: false },
+      result: { type: "enum", origin: "common", values: PaywallCloseResult, extensible: true },
+      via: { type: "enum", origin: "common", values: PaywallCloseVia, extensible: true },
+      product: { type: "enum", origin: "common", optional: true, values: PlanPeriod, extensible: true },
       open_s: { type: "count", origin: "common" },
     },
   },
@@ -167,14 +167,14 @@ export const EVENTS = {
     parameters: {
       source: { type: "enum", origin: "common", values: PaywallSource, extensible: true },
       pw_id: { type: "token", origin: "common", pattern: "[a-f0-9]{8}", maxLength: 64 },
-      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: false },
+      product: { type: "enum", origin: "common", values: PlanPeriod, extensible: true },
     },
   },
   restore_completed: {
     kind: "outcome", dedup: "always", origin: "common", sentBy: "app",
     parameters: {
-      source: { type: "enum", origin: "common", values: RestoreSource, extensible: false },
-      result: { type: "enum", origin: "common", values: RestoreResult, extensible: false },
+      source: { type: "enum", origin: "common", values: RestoreSource, extensible: true },
+      result: { type: "enum", origin: "common", values: RestoreResult, extensible: true },
     },
   },
   review_requested: {
@@ -195,7 +195,7 @@ export const EVENTS = {
       release: { type: "token", origin: "common", pattern: "[0-9]{1,3}(\\.[0-9]{1,3}){1,2}", maxLength: 64 },
       page: { type: "count", origin: "common" },
       pages: { type: "count", origin: "common" },
-      via: { type: "enum", origin: "common", values: WhatsNewCloseVia, extensible: false },
+      via: { type: "enum", origin: "common", values: WhatsNewCloseVia, extensible: true },
     },
   },
   entry_saved: {
@@ -203,6 +203,7 @@ export const EVENTS = {
     parameters: {
       screen: { type: "enum", origin: "app", values: ScreenName, extensible: true },
       words: { type: "bucket", origin: "app", edges: [1, 50, 200], values: ["0", "1_49", "50_199", "200_plus"] },
+      streak: { type: "bucket", origin: "app", optional: true, edges: [1, 2, 10], values: ["0", "1", "2_9", "10+"] },
     },
   },
 } as const;
@@ -235,5 +236,5 @@ export interface EventProps {
   review_requested: { moment: ReviewMomentName };
   whats_new_shown: { release: string };
   whats_new_closed: { release: string; page: number; pages: number; via: WhatsNewCloseVia };
-  entry_saved: { screen: ScreenName; words: "0" | "1_49" | "50_199" | "200_plus" };
+  entry_saved: { screen: ScreenName; words: "0" | "1_49" | "50_199" | "200_plus"; streak?: "0" | "1" | "2_9" | "10+" };
 }

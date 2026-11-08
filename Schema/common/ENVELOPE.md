@@ -30,8 +30,9 @@
 | `uid` | サインインしていれば Firebase の uid。行動と課金を結ばないアプリは送らない |
 | `app_version`・`build` | `CFBundleShortVersionString`・`CFBundleVersion` |
 | `channel` | `BuildChannel`。Debug ビルド・TestFlight（sandbox のレシート）・App Store |
-| `lang`・`region` | 端末の言語と地域（`Locale.current`） |
-| `sent_at`・`occurred_at` | UNIX 時刻のミリ秒（UTC）。秒や ISO 文字列は使わない |
+| `lang` | 端末の言語。BCP 47 の言語の札で、地域は含めない（`ja`・`en`・`zh-Hans`・`zh-Hant`・`sr-Latn`）。中国語はいつも文字（`Hans`・`Hant`）を付け、ほかの言語はふだんと違う文字のときだけ付ける（`EnvelopeContext.languageTag(of:)`）。0.3.0 は言語の2文字だけで、簡体字と繁体字が同じ `zh` だった |
+| `region` | 端末の地域（`Locale.current.region`。`JP`） |
+| `sent_at`・`occurred_at` | UNIX 時刻のミリ秒（UTC）。秒や ISO 文字列は使わない。`occurred_at` は track した時刻か、`occurred(at:)` で作った出来事ならその時刻（溜めてから送る出来事のため） |
 | `events[].id` | 出来事ごとの UUID。再送で同じ物が2回届いても受ける側で1つにする |
 | `events[].props` | 出来事の引数。値は文字列・数・真偽だけ（入れ子にしない） |
 

@@ -115,7 +115,7 @@ public enum JournalEvent: AnalyticsEvent {
     case whatsNewClosed(release: Release, page: Int, pages: Int, via: WhatsNewCloseVia)
 
     /// 日記を保存した
-    case entrySaved(screen: ScreenName, words: Int)
+    case entrySaved(screen: ScreenName, words: Int, streak: Int? = nil)
 
     /// `screen_viewed.screen` の値。
     public enum ScreenName: String, Sendable, CaseIterable {
@@ -340,7 +340,7 @@ public enum JournalEvent: AnalyticsEvent {
         case .reviewRequested(_): return "review_requested"
         case .whatsNewShown(_): return "whats_new_shown"
         case .whatsNewClosed(_, _, _, _): return "whats_new_closed"
-        case .entrySaved(_, _): return "entry_saved"
+        case .entrySaved(_, _, _): return "entry_saved"
         }
     }
 
@@ -365,7 +365,7 @@ public enum JournalEvent: AnalyticsEvent {
         case .reviewRequested(_): return .outcome
         case .whatsNewShown(_): return .impression
         case .whatsNewClosed(_, _, _, _): return .outcome
-        case .entrySaved(_, _): return .outcome
+        case .entrySaved(_, _, _): return .outcome
         }
     }
 
@@ -390,7 +390,7 @@ public enum JournalEvent: AnalyticsEvent {
         case .reviewRequested(_): return .always
         case .whatsNewShown(_): return .always
         case .whatsNewClosed(_, _, _, _): return .always
-        case .entrySaved(_, _): return .always
+        case .entrySaved(_, _, _): return .always
         }
     }
 
@@ -418,7 +418,10 @@ public enum JournalEvent: AnalyticsEvent {
         case let .reviewRequested(moment): return ["moment": .text(moment.rawValue)]
         case let .whatsNewShown(release): return ["release": .text(release.rawValue)]
         case let .whatsNewClosed(release, page, pages, via): return ["release": .text(release.rawValue), "page": .count(page), "pages": .count(pages), "via": .text(via.rawValue)]
-        case let .entrySaved(screen, words): return ["screen": .text(screen.rawValue), "words": .bucket(words, edges: [1, 50, 200])]
+        case let .entrySaved(screen, words, streak):
+            var parameters: [String: AnalyticsValue] = ["screen": .text(screen.rawValue), "words": .bucket(words, edges: [1, 50, 200])]
+            if let streak { parameters["streak"] = .bucket(streak, edges: [1, 2, 10], labels: ["0", "1", "2_9", "10+"]) }
+            return parameters
         }
     }
 }

@@ -81,6 +81,14 @@ struct CommonCatalogTests {
         #expect(purchased.parameters["product"] == .text("yearly"))
     }
 
+    @Test("labels を書いた bucket はその名前で載る")
+    func labelledBucket() {
+        let event = JournalEvent.entrySaved(screen: .home, words: 3, streak: 12)
+        #expect(event.parameters["streak"] == .text("10+"))
+        #expect(event.parameters["words"] == .text("1_49"))
+        #expect(JournalEvent.entrySaved(screen: .home, words: 3).parameters["streak"] == nil)
+    }
+
     @Test("お知らせの版の token は「1.2」「1.2.3」の形だけを通す")
     func releaseTokenFollowsItsPattern() {
         #expect(JournalEvent.Release("1.2") != nil)

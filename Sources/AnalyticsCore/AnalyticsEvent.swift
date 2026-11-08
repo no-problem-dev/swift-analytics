@@ -1,3 +1,5 @@
+import Foundation
+
 /// One thing that happened in the app.
 ///
 /// Conforming types are **generated per app** (`Scripts/analytics-gen.py` writes them out from
@@ -45,11 +47,36 @@ public protocol AnalyticsEvent: Sendable {
     /// the event as `any AnalyticsEvent` — reaches the conforming type's own key. (Up to 0.2 it
     /// lived only in the extension, and a key written on the type was silently ignored.)
     var dedupKey: String { get }
+
+    /// When it happened, for an occurrence that is handed over later than it happened.
+    ///
+    /// `nil` (the default) means "now": a destination that records the time uses the moment it is
+    /// tracked. Set it through ``occurred(at:)`` rather than on the conforming type.
+    var occurredAt: Date? { get }
 }
 
 public extension AnalyticsEvent {
 
     var dedupKey: String { name }
+
+    var occurredAt: Date? { nil }
+
+    /// The same occurrence, carrying the time it actually happened.
+    ///
+    /// For occurrences held back before they are tracked — first-run events kept until the
+    /// experiment arm is known, say — so that `AnalyticsBatchSink` writes when they happened
+    /// rather than when they were let go:
+    ///
+    /// ```swift
+    /// held.append(AppEvent.onboardingStep(step: .welcome, index: 1).occurred(at: Date()))
+    /// // later
+    /// for event in held { analytics.track(event) }
+    /// ```
+    ///
+    /// Everything else (name, parameters, kind, dedup) is the wrapped occurrence's.
+    func occurred(at date: Date) -> DatedEvent {
+        DatedEvent(self, occurredAt: date)
+    }
 
     /// One-line rendering for logs and assertions.
     ///
@@ -64,6 +91,26 @@ public extension AnalyticsEvent {
             .joined(separator: " ")
         return "\(name) \(rendered)"
     }
+}
+
+/// An occurrence together with the time it happened. Made by ``AnalyticsEvent/occurred(at:)``.
+public struct DatedEvent: AnalyticsEvent {
+
+    /// The occurrence as it was made.
+    public let event: any AnalyticsEvent
+    private let date: Date
+
+    public init(_ event: any AnalyticsEvent, occurredAt: Date) {
+        self.event = (event as? DatedEvent)?.event ?? event
+        self.date = occurredAt
+    }
+
+    public var name: String { event.name }
+    public var parameters: [String: AnalyticsValue] { event.parameters }
+    public var kind: EventKind { event.kind }
+    public var dedup: DedupScope { event.dedup }
+    public var dedupKey: String { event.dedupKey }
+    public var occurredAt: Date? { date }
 }
 
 /// An attribute that stays attached to a person: not something that happened, but how things

@@ -37,7 +37,7 @@ import os
 /// ## What is kept and when it goes
 ///
 /// - Each occurrence is given an `id` (a UUID) and the time it happened (`occurred_at`, ms) as it
-///   is tracked, along with the app version, build, and uid at that moment. The receiver uses the
+///   is tracked — or the time it carries, when it was made with `occurred(at:)` — along with the app version, build, and uid at that moment. The receiver uses the
 ///   `id` to keep a batch that arrives twice from counting twice
 /// - The spool is a JSON file in `directory`, written off the calling thread after each change,
 ///   and read back when the sink is made. Past ``BatchPolicy/capacity`` the oldest are dropped
@@ -134,7 +134,7 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
         let spooled = SpooledEvent(
             id: makeID(),
             name: event.name,
-            occurredAt: BatchLayout.milliseconds(now()),
+            occurredAt: BatchLayout.milliseconds(event.occurredAt ?? now()),
             props: event.parameters.mapValues(WireValue.init),
             appVersion: device.appVersion,
             build: device.build,
@@ -171,10 +171,29 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
     /// ``BatchPolicy/minimumInterval`` of the last attempt.
     @discardableResult
     public func flush() async -> FlushReport {
+        await flush(ignoringInterval: false)
+    }
+
+    /// Sends what is kept; with `ignoringInterval`, even within ``BatchPolicy/minimumInterval`` of
+    /// the last attempt.
+    ///
+    /// For the move to the background: what is not sent then waits for the next launch, which may
+    /// be days away, so the spacing between attempts should not hold it back. A wait the receiver
+    /// asked for (`Retry-After`, or a `429`/`5xx`) is still honoured, and so is a flush already
+    /// running.
+    ///
+    /// ```swift
+    /// .onChange(of: scenePhase) { _, phase in
+    ///     if phase == .background { Task { await sink.flush(ignoringInterval: true) } }
+    /// }
+    /// ```
+    @discardableResult
+    public func flush(ignoringInterval: Bool) async -> FlushReport {
         let started = now()
         let claim = state.withLock { state -> FlushReport.Status? in
             if state.isFlushing { return .busy }
-            if let notBefore = state.notBefore, started < notBefore { return .throttled(until: notBefore) }
+            if let wait = state.receiverNotBefore, started < wait { return .throttled(until: wait) }
+            if !ignoringInterval, let notBefore = state.notBefore, started < notBefore { return .throttled(until: notBefore) }
             state.isFlushing = true
             return nil
         }
@@ -223,7 +242,10 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
             case let .retryLater(after):
                 let wait = max(after?.timeInterval ?? 0, interval)
                 let until = now().addingTimeInterval(wait)
-                state.withLock { $0.notBefore = until }
+                state.withLock {
+                    $0.notBefore = until
+                    $0.receiverNotBefore = until
+                }
                 status = .deferred(until: until)
             }
             break
@@ -242,6 +264,7 @@ public final class AnalyticsBatchSink: AnalyticsClient, Sendable {
         state.withLock { state in
             state.events.removeAll()
             state.notBefore = nil
+            state.receiverNotBefore = nil
             state.generation += 1
         }
         await save()

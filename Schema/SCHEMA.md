@@ -69,11 +69,28 @@ events:
 | `count` | `Int` | 個数・日数 |
 | `number` | `Double` | 割合・秒 |
 | `flag` | `Bool` | 真偽。GA4 では 0/1 に落ちる |
-| `bucket` | `Int` を受け取り帯に落とす | 生の件数を送らないための型。`edges: [1, 6, 16]` |
+| `bucket` | `Int` を受け取り帯に落とす | 生の件数を送らないための型。`edges: [1, 6, 16]`。帯の名前は `labels:` で決められる（下の「bucket の帯の名前」） |
 | `token` | 生成される入れ子の struct（`init?(_:)`） | **サーバーが作った不透明な値**（`render_id`）と、**意味で決めたキー**（`place:ChIJ…`）だけ。出来事の引数にだけ使え、属性には使えない |
 
 `enum` の値は `snake_case` で書く。Swift 側の case 名は自動で lowerCamelCase になり、
 raw 値は書いたままが送られる。
+
+### bucket の帯の名前
+
+既定の帯の名前は `AnalyticsValue.bucket(_:edges:)` が作る（`edges: [1, 6, 16]` なら `0`・`1_5`・`6_15`・`16_plus`）。
+受け手がもう別の名前を読んでいるときは `labels:` で決める。
+
+```yaml
+      streak:
+        type: bucket
+        edges: [1, 2, 10]
+        labels: ["0", "1", "2_9", "10+"]   # 1 つ目は一番下の edge より下。続きは edge ごと（昇順）
+```
+
+- `labels` は `edges` より 1 つ多い。`edges` は小さい順に、重ねずに書く
+- 名前は英小文字・数字・`_` `+` `.` `-` だけ。同じ名前は 2 回書けない。`+` を含む名前は引用符で書く
+- Swift は `AnalyticsValue.bucket(_:edges:labels:)` で送る。`--json` と `--ts` の `values` は `labels` になる
+- 引数にも属性にも書ける。共通の引数の `labels` は `extend:` で変えられない
 
 ### optional
 
@@ -191,7 +208,9 @@ events:
         values: [onboarding, paywall, settings, whats_new]
 ```
 
-`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。アプリのカタログの enum に書いてもよいが、
+`enum` にだけ書ける。同じ型名を使う場所はどれも同じ `extensible` にする。共通カタログの enum は、
+AnalyticsCore が送る `FirstOpenKind` のほかはどれも `extensible: true`（`PaywallCloseResult` の `continue_free`、
+`PlanPeriod` の `quarterly` などをアプリが足せる）。アプリのカタログの enum に書いてもよいが、
 `--json` と `--ts` に載るだけで生成器の動きは変わらない。
 
 ### sent_by: package
