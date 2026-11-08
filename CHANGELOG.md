@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-08
+
 ### Fixed
 
 - Generator: a parameter added to a common event through `extend:` can use a common enum by its
